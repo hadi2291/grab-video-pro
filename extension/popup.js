@@ -64,7 +64,7 @@ function renderMedia() {
 
   emptyState.style.display = 'none';
   mediaCount.textContent = `${mediaList.length} media ditemukan`;
-  btnDownloadAll.style.display = isEngineOnline ? 'block' : 'none';
+  btnDownloadAll.style.display = isEngineOnline && mediaList.length > 1 ? 'block' : 'none';
 
   // Clear existing
   const existing = mediaListContainer.querySelectorAll('.media-card');
@@ -74,41 +74,88 @@ function renderMedia() {
     const card = document.createElement('div');
     card.className = 'media-card';
 
-    const sizeText = item.size > 0 ? formatBytes(item.size) : (item.format === 'M3U8' ? 'HLS Stream' : 'Ukuran Otomatis');
-
-    card.innerHTML = `
-      <div class="card-header">
-        <div class="title-wrap">
-          <div class="media-title" title="${item.filename}">${item.filename}</div>
-          <div class="media-meta">${sizeText}</div>
+    if (item.isYoutube) {
+      // Special YouTube Card
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="title-wrap">
+            <div class="media-title" title="${item.title || item.filename}">${item.title || item.filename}</div>
+            <div class="media-meta" style="color: #ef4444; font-weight: 600;">YouTube Video Terdeteksi</div>
+          </div>
+          <span class="format-tag" style="background: rgba(239, 68, 68, 0.2); color: #ef4444;">YOUTUBE</span>
         </div>
-        <span class="format-tag ${item.format}">${item.format}</span>
-      </div>
-      <div class="card-actions">
-        <button class="btn-action-primary" data-index="${index}">
-          ⚡ Download di App
-        </button>
-        <button class="btn-action-secondary btn-browser" data-index="${index}" title="Download via Browser">
-          ⬇️ Browser
-        </button>
-        <button class="btn-action-secondary btn-copy" data-index="${index}" title="Salin URL">
-          📋 Salin
-        </button>
-      </div>
-    `;
+        <div class="card-actions" style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px;">
+          <button class="btn-action-primary btn-yt-mp4" title="Unduh Video MP4 Resolusi Penuh">
+            ⚡ MP4 Video
+          </button>
+          <button class="btn-action-primary btn-yt-mp3" style="background: linear-gradient(135deg, #8b5cf6, #6366f1);" title="Unduh Musik Audio MP3">
+            🎵 MP3 Audio
+          </button>
+          <button class="btn-action-secondary btn-copy" title="Salin URL">
+            📋
+          </button>
+        </div>
+      `;
 
-    // Button event listeners
-    const btnApp = card.querySelector('.btn-action-primary');
-    btnApp.addEventListener('click', () => sendToApp(item));
+      const btnMp4 = card.querySelector('.btn-yt-mp4');
+      btnMp4.addEventListener('click', () => sendToApp({
+        url: item.url,
+        filename: `${item.title || 'youtube_video'}.mp4`,
+        format: 'mp4',
+        pageTitle: item.title
+      }));
 
-    const btnBrowser = card.querySelector('.btn-browser');
-    btnBrowser.addEventListener('click', () => downloadInBrowser(item));
+      const btnMp3 = card.querySelector('.btn-yt-mp3');
+      btnMp3.addEventListener('click', () => sendToApp({
+        url: item.url,
+        filename: `${item.title || 'youtube_audio'}.mp3`,
+        format: 'mp3',
+        pageTitle: item.title
+      }));
 
-    const btnCopy = card.querySelector('.btn-copy');
-    btnCopy.addEventListener('click', () => {
-      navigator.clipboard.writeText(item.url);
-      showToast('URL berhasil disalin!');
-    });
+      const btnCopy = card.querySelector('.btn-copy');
+      btnCopy.addEventListener('click', () => {
+        navigator.clipboard.writeText(item.url);
+        showToast('Link YouTube berhasil disalin!');
+      });
+
+    } else {
+      // Generic Video Card
+      const sizeText = item.size > 0 ? formatBytes(item.size) : (item.format === 'M3U8' ? 'HLS Stream' : 'Ukuran Otomatis');
+
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="title-wrap">
+            <div class="media-title" title="${item.filename}">${item.filename}</div>
+            <div class="media-meta">${sizeText}</div>
+          </div>
+          <span class="format-tag ${item.format}">${item.format}</span>
+        </div>
+        <div class="card-actions">
+          <button class="btn-action-primary" data-index="${index}">
+            ⚡ Download di App
+          </button>
+          <button class="btn-action-secondary btn-browser" data-index="${index}" title="Download via Browser">
+            ⬇️ Browser
+          </button>
+          <button class="btn-action-secondary btn-copy" data-index="${index}" title="Salin URL">
+            📋 Salin
+          </button>
+        </div>
+      `;
+
+      const btnApp = card.querySelector('.btn-action-primary');
+      btnApp.addEventListener('click', () => sendToApp(item));
+
+      const btnBrowser = card.querySelector('.btn-browser');
+      btnBrowser.addEventListener('click', () => downloadInBrowser(item));
+
+      const btnCopy = card.querySelector('.btn-copy');
+      btnCopy.addEventListener('click', () => {
+        navigator.clipboard.writeText(item.url);
+        showToast('URL berhasil disalin!');
+      });
+    }
 
     mediaListContainer.appendChild(card);
   });
@@ -129,7 +176,7 @@ async function sendToApp(item) {
         url: item.url,
         filename: item.filename,
         format: item.format ? item.format.toLowerCase() : null,
-        pageTitle: currentTab ? currentTab.title : '',
+        pageTitle: item.pageTitle || (currentTab ? currentTab.title : ''),
         pageUrl: currentTab ? currentTab.url : ''
       })
     });

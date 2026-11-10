@@ -1,8 +1,6 @@
 // GrabVideo - Service Worker Background Sniffer
 const tabMedia = new Map(); // tabId -> Array of media items
 
-const MEDIA_EXTENSIONS = /\.(mp4|webm|m3u8|ts|mp3|m4a|aac|flv|mkv|mov|ogg|wav)(\?.*)?$/i;
-
 function getExtension(url) {
   const clean = url.split('?')[0].toLowerCase();
   const match = clean.match(/\.(mp4|webm|m3u8|ts|mp3|m4a|aac|flv|mkv|mov|ogg|wav)$/i);
@@ -23,11 +21,9 @@ function getHeader(headers, name) {
 // Sniff requests via chrome.webRequest
 chrome.webRequest.onResponseStarted.addListener(
   (details) => {
-    // Only capture from active tabs
     if (details.tabId <= 0) return;
 
     const url = details.url;
-    // Skip browser internals and our own local server
     if (url.startsWith('chrome') || url.includes('127.0.0.1:54321') || url.includes('localhost:54321')) {
       return;
     }
@@ -57,17 +53,15 @@ chrome.webRequest.onResponseStarted.addListener(
       }
     }
 
-    // Must match either extension or mime type
     if (!ext && !isVideoMime && !isAudioMime) {
       return;
     }
 
-    // Filter out tiny snippets (e.g. tracking pixels or audio sprites under 50KB unless m3u8)
+    // Filter tiny snippet unless m3u8
     if (contentLength > 0 && contentLength < 50 * 1024 && ext !== 'm3u8') {
       return;
     }
 
-    // Attempt filename extraction
     let filename = '';
     if (contentDisposition) {
       const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
@@ -107,6 +101,15 @@ function addMediaItem(tabId, item) {
     tabMedia.set(tabId, list);
   }
 
+  // If item is YouTube, put at very top and replace older youtube item
+  if (item.isYoutube) {
+    list = list.filter(m => !m.isYoutube);
+    list.unshift(item);
+    tabMedia.set(tabId, list);
+    updateBadge(tabId);
+    return;
+  }
+
   // Avoid duplicates
   const existing = list.find(m => m.url === item.url);
   if (existing) {
@@ -123,7 +126,7 @@ function updateBadge(tabId) {
   const count = list.length;
   if (count > 0) {
     chrome.action.setBadgeText({ tabId, text: count.toString() });
-    chrome.action.setBadgeBackgroundColor({ tabId, color: '#3b82f6' });
+    chrome.action.setBadgeBackgroundColor({ tabId, color: '#ef4444' }); // YouTube-friendly red/blue
   } else {
     chrome.action.setBadgeText({ tabId, text: '' });
   }
@@ -143,6 +146,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Messages from content script or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'YOUTUBE_MEDIA_FOUND' && sender.tab) {
+    const tabId = sender.tab.id;
+    addMediaItem(tabId, message.item);
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (message.type === 'DOM_MEDIA_FOUND' && sender.tab) {
     const tabId = sender.tab.id;
     for (const item of message.items) {

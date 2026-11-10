@@ -3,12 +3,16 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const { spawn } = require('child_process');
 
 class DownloadManager {
   constructor(options = {}) {
     this.downloadDir = options.downloadDir || path.join(__dirname, 'downloads');
+    this.binDir = path.join(__dirname, 'bin');
+    this.ytDlpPath = path.join(this.binDir, 'yt-dlp.exe');
     this.ensureDir(this.downloadDir);
-    this.activeJobs = new Map(); // id -> { controller, abortFn, item }
+    this.ensureDir(this.binDir);
+    this.activeJobs = new Map(); // id -> { controller, abortFn, item, process }
     this.onProgressCallback = null;
     this.onStatusCallback = null;
   }
@@ -58,6 +62,26 @@ class DownloadManager {
     return 'mp4';
   }
 
+  isSocialOrStreamingUrl(urlStr) {
+    try {
+      const u = new URL(urlStr);
+      const host = u.hostname.toLowerCase();
+      return (
+        host.includes('youtube.com') ||
+        host.includes('youtu.be') ||
+        host.includes('tiktok.com') ||
+        host.includes('instagram.com') ||
+        host.includes('twitter.com') ||
+        host.includes('x.com') ||
+        host.includes('facebook.com') ||
+        host.includes('fb.watch') ||
+        host.includes('vimeo.com')
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
   async start(item) {
     if (this.activeJobs.has(item.id)) {
       console.log(`Job ${item.id} already active.`);
@@ -68,13 +92,151 @@ class DownloadManager {
     item.error = null;
     this.notifyStatus(item);
 
-    const isM3U8 = item.url.includes('.m3u8') || (item.format && item.format.toLowerCase() === 'm3u8');
+    // Check if it's YouTube / Social URL and yt-dlp is available
+    if (this.isSocialOrStreamingUrl(item.url) && fs.existsSync(this.ytDlpPath)) {
+      return this.startYtDlpDownload(item);
+    }
 
+    const isM3U8 = item.url.includes('.m3u8') || (item.format && item.format.toLowerCase() === 'm3u8');
     if (isM3U8) {
       return this.startM3U8Download(item);
     } else {
       return this.startDirectDownload(item);
     }
+  }
+
+  // --- YT-DLP DOWNLOADER FOR YOUTUBE & SOCIAL MEDIA ---
+  startYtDlpDownload(item) {
+    let isAborted = false;
+
+    const abortFn = () => {
+      isAborted = true;
+      if (proc && !proc.killed) {
+        try {
+          proc.kill('SIGINT');
+        } catch (e) {}
+      }
+    };
+
+    const outTemplate = path.join(this.downloadDir, '%(title)s.%(ext)s');
+    const args = [
+      '--newline',
+      '--no-playlist',
+      '--no-colors',
+      '-o', outTemplate
+    ];
+
+    if (item.format === 'mp3') {
+      args.push('-x', '--audio-format', 'mp3');
+    } else {
+      // Best MP4 or compatible
+      args.push('-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b');
+    }
+
+    args.push(item.url);
+
+    const proc = spawn(this.ytDlpPath, args, { windowsHide: true });
+    this.activeJobs.set(item.id, { abortFn, item, process: proc });
+
+    let finalFilePath = item.filePath;
+
+    proc.stdout.on('data', (chunk) => {
+      if (isAborted) return;
+      const text = chunk.toString();
+      const lines = text.split(/\r?\n/);
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        // Check destination file name
+        const destMatch = line.match(/Destination:\s*(.+)$/i) || line.match(/Merging formats into "(.+)"/i) || line.match(/\[download\]\s*(.+?)\s+has already been downloaded/i);
+        if (destMatch) {
+          finalFilePath = destMatch[1].trim();
+          item.filePath = finalFilePath;
+          item.filename = path.basename(finalFilePath);
+        }
+
+        // Parse progress line: [download]  45.2% of 15.00MiB at 3.20MiB/s ETA 00:03
+        if (line.includes('[download]') && line.includes('%')) {
+          const pctMatch = line.match(/(\d+(?:\.\d+)?)%/);
+          if (pctMatch) {
+            const pct = parseFloat(pctMatch[1]);
+            item.totalBytes = 100;
+            item.downloadedBytes = Math.min(100, Math.round(pct));
+          }
+
+          // Speed
+          const speedMatch = line.match(/at\s+([\d.]+[KMGTP]i?B\/s)/i);
+          if (speedMatch) {
+            item.speedStr = speedMatch[1];
+            item.speed = this.parseSpeedToBytes(speedMatch[1]);
+          }
+
+          // ETA
+          const etaMatch = line.match(/ETA\s+(\d+:\d+(?::\d+)?)/i);
+          if (etaMatch) {
+            item.etaStr = etaMatch[1];
+            item.eta = this.parseEtaToSeconds(etaMatch[1]);
+          }
+
+          this.notifyProgress(item);
+        }
+      }
+    });
+
+    proc.stderr.on('data', (chunk) => {
+      console.warn(`yt-dlp [${item.id}]:`, chunk.toString().trim());
+    });
+
+    proc.on('close', (code) => {
+      this.activeJobs.delete(item.id);
+      if (isAborted) return;
+
+      if (code === 0) {
+        item.status = 'completed';
+        item.downloadedBytes = 100;
+        item.totalBytes = 100;
+        item.speed = 0;
+        item.eta = 0;
+        this.notifyStatus(item);
+      } else {
+        item.status = 'error';
+        item.error = `yt-dlp exited with code ${code}`;
+        item.speed = 0;
+        this.notifyStatus(item);
+      }
+    });
+
+    proc.on('error', (err) => {
+      this.activeJobs.delete(item.id);
+      if (isAborted) return;
+      item.status = 'error';
+      item.error = err.message;
+      item.speed = 0;
+      this.notifyStatus(item);
+    });
+  }
+
+  parseSpeedToBytes(str) {
+    const match = str.match(/([\d.]+)\s*([KMGTP]i?B)\/s/i);
+    if (!match) return 0;
+    const val = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+    if (unit.startsWith('K')) return Math.round(val * 1024);
+    if (unit.startsWith('M')) return Math.round(val * 1024 * 1024);
+    if (unit.startsWith('G')) return Math.round(val * 1024 * 1024 * 1024);
+    return Math.round(val);
+  }
+
+  parseEtaToSeconds(str) {
+    const parts = str.split(':').map(Number);
+    if (parts.length === 2) {
+      return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+    return null;
   }
 
   // --- DIRECT FILE DOWNLOAD (MP4, WEBM, MP3, etc.) ---
@@ -86,22 +248,16 @@ class DownloadManager {
     const filePath = item.filePath || path.join(this.downloadDir, item.filename);
     item.filePath = filePath;
 
-    // Check existing downloaded bytes if resuming
     let existingBytes = 0;
     if (fs.existsSync(filePath)) {
       const stats = fs.statSync(filePath);
       existingBytes = stats.size;
     }
 
-    // Set up abort controller
     const abortFn = () => {
       isAborted = true;
-      if (clientReq) {
-        clientReq.destroy();
-      }
-      if (writeStream) {
-        writeStream.end();
-      }
+      if (clientReq) clientReq.destroy();
+      if (writeStream) writeStream.end();
     };
 
     this.activeJobs.set(item.id, { abortFn, item });
@@ -131,7 +287,6 @@ class DownloadManager {
       };
 
       clientReq = client.request(reqOptions, (res) => {
-        // Handle HTTP Redirects
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
           this.activeJobs.delete(item.id);
           const redirectUrl = new URL(res.headers.location, item.url).href;
@@ -152,7 +307,7 @@ class DownloadManager {
             totalSize = existingBytes + streamLen;
           } else {
             totalSize = streamLen;
-            existingBytes = 0; // server doesn't support range, restart from 0
+            existingBytes = 0;
           }
         } else if (res.headers['content-range']) {
           const match = res.headers['content-range'].match(/\/(\d+)/);
@@ -179,7 +334,6 @@ class DownloadManager {
           const now = Date.now();
           const diff = now - lastTime;
           if (diff >= 500) {
-            // Speed in bytes/sec
             item.speed = Math.round((bytesSinceLast / diff) * 1000);
             if (item.totalBytes > 0 && item.speed > 0) {
               const remaining = item.totalBytes - item.downloadedBytes;
@@ -250,9 +404,7 @@ class DownloadManager {
 
     const abortFn = () => {
       isAborted = true;
-      if (currentReq) {
-        currentReq.destroy();
-      }
+      if (currentReq) currentReq.destroy();
     };
 
     this.activeJobs.set(item.id, { abortFn, item });
@@ -265,11 +417,9 @@ class DownloadManager {
       const filePath = item.filePath || path.join(this.downloadDir, item.filename);
       item.filePath = filePath;
 
-      // 1. Fetch playlist
       const playlistText = await this.fetchText(item.url);
       let targetPlaylistUrl = item.url;
 
-      // Check if it's a master playlist
       if (playlistText.includes('#EXT-X-STREAM-INF')) {
         const lines = playlistText.split('\n');
         let highestBandwidth = -1;
@@ -293,7 +443,6 @@ class DownloadManager {
         }
       }
 
-      // Fetch the actual media playlist
       const mediaPlaylistText = targetPlaylistUrl === item.url ? playlistText : await this.fetchText(targetPlaylistUrl);
       const mediaLines = mediaPlaylistText.split('\n');
       const segmentUrls = [];
@@ -311,7 +460,7 @@ class DownloadManager {
 
       item.totalSegments = segmentUrls.length;
       if (!item.downloadedSegments) item.downloadedSegments = 0;
-      item.totalBytes = segmentUrls.length; // use segments as relative metric
+      item.totalBytes = segmentUrls.length;
       item.downloadedBytes = item.downloadedSegments;
 
       const writeStream = fs.createWriteStream(filePath, {
@@ -365,7 +514,7 @@ class DownloadManager {
         const now = Date.now();
         const diff = now - lastTime;
         if (diff >= 500 || i === segmentUrls.length - 1) {
-          item.speed = Math.round((segsSinceLast / (diff / 1000))); // segments per sec
+          item.speed = Math.round((segsSinceLast / (diff / 1000)));
           const remSegs = segmentUrls.length - (i + 1);
           item.eta = item.speed > 0 ? Math.round(remSegs / item.speed) : null;
           segsSinceLast = 0;
