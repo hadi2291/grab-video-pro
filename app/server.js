@@ -210,6 +210,7 @@ const server = http.createServer(async (req, res) => {
       format: detectedFormat,
       pageTitle: body.pageTitle || cleanFilename,
       pageUrl: body.pageUrl || '',
+      headers: body.headers || {},
       status: 'queued',
       downloadedBytes: 0,
       totalBytes: 0,

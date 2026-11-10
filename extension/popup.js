@@ -177,7 +177,10 @@ async function sendToApp(item) {
         filename: item.filename,
         format: item.format ? item.format.toLowerCase() : null,
         pageTitle: item.pageTitle || (currentTab ? currentTab.title : ''),
-        pageUrl: currentTab ? currentTab.url : ''
+        pageUrl: currentTab ? currentTab.url : '',
+        headers: {
+          'Referer': currentTab ? currentTab.url : ''
+        }
       })
     });
 

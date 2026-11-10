@@ -311,9 +311,9 @@ class DownloadManager {
       const client = isHttps ? https : http;
 
       const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': (item.headers && item.headers['User-Agent']) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': '*/*',
-        'Referer': parsedUrl.origin + '/'
+        'Referer': (item.headers && item.headers['Referer']) || item.pageUrl || (parsedUrl.origin + '/')
       };
 
       if (existingBytes > 0) {
