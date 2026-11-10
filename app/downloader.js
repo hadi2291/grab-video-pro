@@ -118,6 +118,7 @@ class DownloadManager {
       }
     };
 
+    const hasFFmpeg = fs.existsSync(path.join(this.binDir, 'ffmpeg.exe'));
     const outTemplate = path.join(this.downloadDir, '%(title)s.%(ext)s');
     const args = [
       '--newline',
@@ -126,11 +127,22 @@ class DownloadManager {
       '-o', outTemplate
     ];
 
-    if (item.format === 'mp3') {
-      args.push('-x', '--audio-format', 'mp3');
+    if (hasFFmpeg) {
+      args.push('--ffmpeg-location', this.binDir);
+      if (item.format === 'mp3') {
+        args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
+      } else {
+        // Best video + audio merged cleanly into a single MP4 container
+        args.push('-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b');
+        args.push('--merge-output-format', 'mp4');
+      }
     } else {
-      // Best MP4 or compatible
-      args.push('-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b');
+      // Fallback if FFmpeg is absent: download single pre-merged stream (video + audio together)
+      if (item.format === 'mp3') {
+        args.push('-f', 'ba[ext=m4a]/ba/bestaudio');
+      } else {
+        args.push('-f', 'b[ext=mp4]/b/best[ext=mp4]/best');
+      }
     }
 
     args.push(item.url);

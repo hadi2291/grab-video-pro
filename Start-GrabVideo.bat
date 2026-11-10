@@ -7,6 +7,11 @@ echo.
 
 cd /d "%~dp0app"
 
+echo Menyiapkan engine...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :54321') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
 echo [1/2] Menjalankan Background Engine GrabVideo...
 start "GrabVideo Engine" /min node server.js
 

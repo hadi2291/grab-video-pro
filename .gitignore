@@ -6,6 +6,10 @@ npm-debug.log*
 app/downloads/*
 !app/downloads/.gitkeep
 
+# Large binaries (downloaded via Install-FFmpeg.bat)
+app/bin/ffmpeg.exe
+app/bin/ffprobe.exe
+
 # System & IDE files
 .DS_Store
 Thumbs.db
