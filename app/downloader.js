@@ -124,6 +124,7 @@ class DownloadManager {
       '--newline',
       '--no-playlist',
       '--no-colors',
+      '--concurrent-fragments', '5',
       '-o', outTemplate
     ];
 
