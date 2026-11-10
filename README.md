@@ -49,17 +49,19 @@ Start-GrabVideo.bat
 ---
 
 ### Langkah 2: Pasang Ekstensi di Browser (Chrome atau Edge)
-1. Buka browser **Google Chrome** atau **Microsoft Edge**.
-2. Masuk ke halaman ekstensi:
-   - Chrome: buka URL `chrome://extensions/`
-   - Edge: buka URL `edge://extensions/`
-3. Aktifkan toggle **Mode Pengembang (Developer Mode)** di sudut kanan atas.
-4. Klik tombol **Muat yang belum dibongkar (Load unpacked)** di kiri atas.
-5. Pilih folder:
-   ```
-   D:\PROJECT_MANDIRI\GrabVideo\extension
-   ```
-6. Ekstensi **GrabVideo** kini aktif di toolbar browser Anda! (Sematkan/Pin ikon ekstensi agar mudah diakses).
+
+**Cara Paling Mudah (Otomatis):**
+> Cukup double-click file: **`Buka-Browser-Dengan-Ekstensi.bat`**
+> Browser Chrome/Edge Anda akan langsung terbuka dengan ekstensi GrabVideo otomatis terpasang dan aktif!
+
+**Cara Manual (Load Unpacked):**
+1. Buka browser **Google Chrome** (`chrome://extensions/`) atau **Microsoft Edge** (`edge://extensions/`).
+2. Aktifkan toggle **Mode Pengembang (Developer Mode)** di sudut kanan atas.
+3. Klik tombol **Muat yang belum dibongkar (Load unpacked)** di kiri atas.
+4. **Penting**: Jendela yang muncul adalah dialog **Pilih Folder (Select Folder)**, bukan pilih file individual.
+   - Sorot/klik **folder `extension`** (atau ekstrak dari `GrabVideo-Extension.zip`).
+   - Klik tombol **"Select Folder" / "Pilih Folder"** di sudut kanan bawah.
+5. Ekstensi **GrabVideo** kini aktif di toolbar browser Anda! (Sematkan/Pin ikon ekstensi agar mudah diakses).
 
 ---
 
