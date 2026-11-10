@@ -66,17 +66,25 @@ class DownloadManager {
     try {
       const u = new URL(urlStr);
       const host = u.hostname.toLowerCase();
-      return (
-        host.includes('youtube.com') ||
-        host.includes('youtu.be') ||
-        host.includes('tiktok.com') ||
-        host.includes('instagram.com') ||
-        host.includes('twitter.com') ||
-        host.includes('x.com') ||
-        host.includes('facebook.com') ||
-        host.includes('fb.watch') ||
-        host.includes('vimeo.com')
-      );
+      const platforms = [
+        'youtube.com', 'youtu.be',
+        'tiktok.com',
+        'instagram.com',
+        'twitter.com', 'x.com',
+        'facebook.com', 'fb.watch',
+        'vimeo.com',
+        'dailymotion.com',
+        'bilibili.tv', 'bilibili.com',
+        'twitch.tv',
+        'reddit.com',
+        'pinterest.com',
+        'threads.net',
+        'rumble.com',
+        'soundcloud.com',
+        'streamable.com',
+        'vk.com'
+      ];
+      return platforms.some(p => host.includes(p));
     } catch (e) {
       return false;
     }
@@ -483,14 +491,8 @@ class DownloadManager {
       let lastTime = Date.now();
       let segsSinceLast = 0;
 
-      for (let i = item.downloadedSegments; i < segmentUrls.length; i++) {
-        if (isAborted) {
-          writeStream.end();
-          return;
-        }
-
-        const segUrl = segmentUrls[i];
-        const segBuf = await new Promise((resolve, reject) => {
+      const downloadSingleSegment = (segUrl) => {
+        return new Promise((resolve, reject) => {
           const parsed = new URL(segUrl);
           const client = parsed.protocol === 'https:' ? https : http;
           const req = client.get(segUrl, {
@@ -513,22 +515,40 @@ class DownloadManager {
           currentReq = req;
           req.on('error', reject);
         });
+      };
+
+      const CONCURRENCY = 4; // 4x parallel segment download
+      for (let i = item.downloadedSegments; i < segmentUrls.length; i += CONCURRENCY) {
+        if (isAborted) {
+          writeStream.end();
+          return;
+        }
+
+        const batchUrls = [];
+        for (let j = i; j < Math.min(i + CONCURRENCY, segmentUrls.length); j++) {
+          batchUrls.push(segmentUrls[j]);
+        }
+
+        const buffers = await Promise.all(batchUrls.map(u => downloadSingleSegment(u)));
 
         if (isAborted) {
           writeStream.end();
           return;
         }
 
-        writeStream.write(segBuf);
-        item.downloadedSegments = i + 1;
+        for (const buf of buffers) {
+          writeStream.write(buf);
+        }
+
+        item.downloadedSegments = Math.min(i + CONCURRENCY, segmentUrls.length);
         item.downloadedBytes = item.downloadedSegments;
-        segsSinceLast++;
+        segsSinceLast += batchUrls.length;
 
         const now = Date.now();
         const diff = now - lastTime;
-        if (diff >= 500 || i === segmentUrls.length - 1) {
+        if (diff >= 500 || item.downloadedSegments >= segmentUrls.length) {
           item.speed = Math.round((segsSinceLast / (diff / 1000)));
-          const remSegs = segmentUrls.length - (i + 1);
+          const remSegs = segmentUrls.length - item.downloadedSegments;
           item.eta = item.speed > 0 ? Math.round(remSegs / item.speed) : null;
           segsSinceLast = 0;
           lastTime = now;
