@@ -62,10 +62,21 @@ class DownloadManager {
     return 'mp4';
   }
 
-  isSocialOrStreamingUrl(urlStr) {
+  isSocialOrStreamingUrl(item) {
+    const urlStr = typeof item === 'string' ? item : item.url;
     try {
       const u = new URL(urlStr);
       const host = u.hostname.toLowerCase();
+      const pathname = u.pathname.toLowerCase();
+
+      // Direct CDN fragments should not be routed to yt-dlp directly
+      if (pathname.includes('/video/tos/') || host.includes('googlevideo.com')) {
+        if (item.pageUrl && this.isSocialPageUrl(item.pageUrl)) {
+          return true;
+        }
+        return false;
+      }
+
       const platforms = [
         'youtube.com', 'youtu.be',
         'tiktok.com',
@@ -85,6 +96,16 @@ class DownloadManager {
         'vk.com'
       ];
       return platforms.some(p => host.includes(p));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  isSocialPageUrl(urlStr) {
+    try {
+      const u = new URL(urlStr);
+      const host = u.hostname.toLowerCase();
+      return host.includes('tiktok.com') || host.includes('instagram.com') || host.includes('youtube.com') || host.includes('twitter.com') || host.includes('x.com');
     } catch (e) {
       return false;
     }
@@ -154,7 +175,8 @@ class DownloadManager {
       }
     }
 
-    args.push(item.url);
+    const targetUrl = (item.pageUrl && this.isSocialPageUrl(item.pageUrl)) ? item.pageUrl : item.url;
+    args.push(targetUrl);
 
     const proc = spawn(this.ytDlpPath, args, { windowsHide: true });
     this.activeJobs.set(item.id, { abortFn, item, process: proc });
@@ -316,7 +338,12 @@ class DownloadManager {
         }
 
         if (res.statusCode !== 200 && res.statusCode !== 206) {
-          throw new Error(`Server returned status code: ${res.statusCode} ${res.statusMessage || ''}`);
+          this.activeJobs.delete(item.id);
+          item.status = 'error';
+          item.error = `HTTP ${res.statusCode} (${res.statusMessage || 'Akses ditolak / link kedaluwarsa'})`;
+          item.speed = 0;
+          this.notifyStatus(item);
+          return;
         }
 
         const isRangeSupported = res.statusCode === 206;

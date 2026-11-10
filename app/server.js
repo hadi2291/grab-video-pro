@@ -6,6 +6,15 @@ const { exec } = require('child_process');
 const storage = require('./storage');
 const DownloadManager = require('./downloader');
 
+// Global Crash Guards
+process.on('uncaughtException', (err) => {
+  console.error('[CRASH GUARD] Uncaught Exception:', err.message || err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRASH GUARD] Unhandled Rejection:', reason);
+});
+
 const PORT = 54321;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
@@ -129,6 +138,10 @@ const server = http.createServer(async (req, res) => {
     });
     res.write('\n');
     sseClients.add(res);
+
+    res.on('error', () => {
+      sseClients.delete(res);
+    });
 
     req.on('close', () => {
       sseClients.delete(res);
