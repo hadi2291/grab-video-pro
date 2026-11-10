@@ -1,0 +1,20 @@
+{
+  "name": "grabvideo",
+  "version": "1.0.0",
+  "description": "Multi-Format Video Grabber & Download Manager for Windows and Browser",
+  "main": "app/server.js",
+  "scripts": {
+    "start": "node app/server.js"
+  },
+  "keywords": [
+    "video-downloader",
+    "video-grabber",
+    "m3u8-downloader",
+    "mp4-downloader",
+    "hls",
+    "chrome-extension",
+    "download-manager"
+  ],
+  "author": "",
+  "license": "MIT"
+}

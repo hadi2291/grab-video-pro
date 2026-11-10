@@ -1,0 +1,14 @@
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Downloaded files
+app/downloads/*
+!app/downloads/.gitkeep
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

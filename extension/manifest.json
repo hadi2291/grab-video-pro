@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "GrabVideo - Multi-Format Video Sniffer",
+  "version": "1.0.0",
+  "description": "Deteksi dan grab video otomatis dari browser (MP4, WebM, M3U8/HLS, MP3, TS) dan kelola di Windows Download Manager.",
+  "permissions": [
+    "webRequest",
+    "storage",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:54321/*",
+    "http://localhost:54321/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "GrabVideo Sniffer",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
