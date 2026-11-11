@@ -1,10 +1,13 @@
 @echo off
-title GrabVideo Engine Daemon
+title GrabVideo Engine - Live Diagnostic Logs
 cd /d "%~dp0"
 
 :loop
-echo [%date% %time%] Menjalankan GrabVideo Engine... >> engine.log
-node server.js >> engine.log 2>&1
-echo [%date% %time%] Engine terhenti, me-restart dalam 1 detik... >> engine.log
-timeout /t 1 /nobreak >nul
+echo ==================================================================
+echo   Memulai GrabVideo Engine (Live Logs)...
+echo ==================================================================
+node server.js
+echo.
+echo [PERINGATAN] Engine terhenti, me-restart otomatis dalam 2 detik...
+timeout /t 2 /nobreak >nul
 goto loop

@@ -4,6 +4,7 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const { spawn } = require('child_process');
+const logger = require('./logger');
 
 class DownloadManager {
   constructor(options = {}) {
@@ -113,7 +114,7 @@ class DownloadManager {
 
   async start(item) {
     if (this.activeJobs.has(item.id)) {
-      console.log(`Job ${item.id} already active.`);
+      logger.warn('JOB', `Job ${item.id} (${item.filename}) sudah berjalan.`);
       return;
     }
 
@@ -121,15 +122,25 @@ class DownloadManager {
     item.error = null;
     this.notifyStatus(item);
 
+    logger.info('START', `Memulai unduhan: ${item.filename}`, {
+      id: item.id,
+      format: item.format,
+      pageUrl: item.pageUrl || '(tidak ada)',
+      url: item.url
+    });
+
     // Check if it's YouTube / Social URL and yt-dlp is available
-    if (this.isSocialOrStreamingUrl(item.url) && fs.existsSync(this.ytDlpPath)) {
+    if (this.isSocialOrStreamingUrl(item) && fs.existsSync(this.ytDlpPath)) {
+      logger.info('ROUTER', `Menggunakan engine YT-DLP untuk ${item.filename}`);
       return this.startYtDlpDownload(item);
     }
 
     const isM3U8 = item.url.includes('.m3u8') || (item.format && item.format.toLowerCase() === 'm3u8');
     if (isM3U8) {
+      logger.info('ROUTER', `Menggunakan engine M3U8 HLS untuk ${item.filename}`);
       return this.startM3U8Download(item);
     } else {
+      logger.info('ROUTER', `Menggunakan engine Direct HTTP untuk ${item.filename}`);
       return this.startDirectDownload(item);
     }
   }
@@ -178,10 +189,13 @@ class DownloadManager {
     const targetUrl = (item.pageUrl && this.isSocialPageUrl(item.pageUrl)) ? item.pageUrl : item.url;
     args.push(targetUrl);
 
+    logger.info('YT-DLP CMD', `yt-dlp.exe ${args.join(' ')}`);
+
     const proc = spawn(this.ytDlpPath, args, { windowsHide: true });
     this.activeJobs.set(item.id, { abortFn, item, process: proc });
 
     let finalFilePath = item.filePath;
+    let stderrMessages = [];
 
     proc.stdout.on('data', (chunk) => {
       if (isAborted) return;
@@ -190,6 +204,10 @@ class DownloadManager {
 
       for (const line of lines) {
         if (!line.trim()) continue;
+
+        if (!line.includes('[download]') || !line.includes('%')) {
+          logger.debug('YT-DLP OUT', line.trim());
+        }
 
         // Check destination file name
         const destMatch = line.match(/Destination:\s*(.+)$/i) || line.match(/Merging formats into "(.+)"/i) || line.match(/\[download\]\s*(.+?)\s+has already been downloaded/i);
@@ -228,14 +246,22 @@ class DownloadManager {
     });
 
     proc.stderr.on('data', (chunk) => {
-      console.warn(`yt-dlp [${item.id}]:`, chunk.toString().trim());
+      const errText = chunk.toString().trim();
+      if (errText) {
+        stderrMessages.push(errText);
+        logger.warn('YT-DLP STDERR', errText);
+      }
     });
 
     proc.on('close', (code) => {
       this.activeJobs.delete(item.id);
-      if (isAborted) return;
+      if (isAborted) {
+        logger.warn('YT-DLP ABORT', `Proses dihentikan oleh user: ${item.filename}`);
+        return;
+      }
 
       if (code === 0) {
+        logger.ok('YT-DLP DONE', `Berhasil diunduh: ${item.filename}`);
         item.status = 'completed';
         item.downloadedBytes = 100;
         item.totalBytes = 100;
@@ -243,8 +269,10 @@ class DownloadManager {
         item.eta = 0;
         this.notifyStatus(item);
       } else {
+        const lastReason = stderrMessages.slice(-2).join(' | ') || `yt-dlp exited with code ${code}`;
+        logger.error('YT-DLP FAIL', `Gagal download (Exit Code: ${code}) untuk ${item.filename}`, lastReason);
         item.status = 'error';
-        item.error = `yt-dlp exited with code ${code}`;
+        item.error = lastReason.length > 160 ? lastReason.slice(0, 160) + '...' : lastReason;
         item.speed = 0;
         this.notifyStatus(item);
       }
@@ -253,6 +281,7 @@ class DownloadManager {
     proc.on('error', (err) => {
       this.activeJobs.delete(item.id);
       if (isAborted) return;
+      logger.error('YT-DLP SPAWN ERR', `Gagal menjalankan yt-dlp: ${err.message}`);
       item.status = 'error';
       item.error = err.message;
       item.speed = 0;
@@ -329,8 +358,20 @@ class DownloadManager {
         headers
       };
 
+      logger.info('HTTP REQ', `GET ${parsedUrl.hostname}${parsedUrl.pathname}`, {
+        referer: headers['Referer'],
+        range: headers['Range'] || 'Full File'
+      });
+
       clientReq = client.request(reqOptions, (res) => {
+        logger.info('HTTP RES', `Status ${res.statusCode} ${res.statusMessage || ''}`, {
+          contentType: res.headers['content-type'] || '-',
+          contentLength: res.headers['content-length'] || '-',
+          acceptRanges: res.headers['accept-ranges'] || '-'
+        });
+
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          logger.info('HTTP REDIRECT', `Redirect ke: ${res.headers.location}`);
           this.activeJobs.delete(item.id);
           const redirectUrl = new URL(res.headers.location, item.url).href;
           item.url = redirectUrl;
@@ -338,11 +379,24 @@ class DownloadManager {
         }
 
         if (res.statusCode !== 200 && res.statusCode !== 206) {
-          this.activeJobs.delete(item.id);
-          item.status = 'error';
-          item.error = `HTTP ${res.statusCode} (${res.statusMessage || 'Akses ditolak / link kedaluwarsa'})`;
-          item.speed = 0;
-          this.notifyStatus(item);
+          let errBody = '';
+          res.on('data', chunk => {
+            if (errBody.length < 500) errBody += chunk.toString();
+          });
+          res.on('end', () => {
+            logger.error('HTTP FAIL', `Download gagal HTTP ${res.statusCode} untuk ${item.filename}`, {
+              status: res.statusCode,
+              statusMessage: res.statusMessage,
+              referer: headers['Referer'],
+              server: res.headers['server'] || '-',
+              bodySnippet: errBody.trim() || '(kosong)'
+            });
+            this.activeJobs.delete(item.id);
+            item.status = 'error';
+            item.error = `HTTP ${res.statusCode} (${res.statusMessage || 'Akses ditolak / link kedaluwarsa'})`;
+            item.speed = 0;
+            this.notifyStatus(item);
+          });
           return;
         }
 
@@ -408,12 +462,14 @@ class DownloadManager {
             if (item.totalBytes === 0) {
               item.totalBytes = item.downloadedBytes;
             }
+            logger.ok('HTTP DONE', `Download selesai: ${item.filename} (${item.downloadedBytes} bytes)`);
             this.notifyStatus(item);
           }
         });
 
         writeStream.on('error', (err) => {
           if (!isAborted) {
+            logger.error('DISK ERR', `Gagal menulis file ${item.filename}: ${err.message}`);
             this.activeJobs.delete(item.id);
             item.status = 'error';
             item.error = err.message;
@@ -425,6 +481,7 @@ class DownloadManager {
 
       clientReq.on('error', (err) => {
         if (!isAborted) {
+          logger.error('NET ERR', `Koneksi gagal untuk ${item.filename}: [${err.code || 'ERR'}] ${err.message}`);
           this.activeJobs.delete(item.id);
           item.status = 'error';
           item.error = err.message;
@@ -436,6 +493,7 @@ class DownloadManager {
       clientReq.end();
     } catch (err) {
       if (!isAborted) {
+        logger.error('HTTP EXCEPT', `Kesalahan eksekusi untuk ${item.filename}: ${err.message}`);
         this.activeJobs.delete(item.id);
         item.status = 'error';
         item.error = err.message;
@@ -465,6 +523,7 @@ class DownloadManager {
       const filePath = item.filePath || path.join(this.downloadDir, item.filename);
       item.filePath = filePath;
 
+      logger.info('M3U8', `Mengambil playlist M3U8: ${item.url}`);
       const playlistText = await this.fetchText(item.url);
       let targetPlaylistUrl = item.url;
 
@@ -488,6 +547,7 @@ class DownloadManager {
 
         if (highestUri) {
           targetPlaylistUrl = new URL(highestUri, item.url).href;
+          logger.info('M3U8 MASTER', `Memilih resolusi tertinggi (Bandwidth: ${highestBandwidth}): ${targetPlaylistUrl}`);
         }
       }
 
@@ -505,6 +565,8 @@ class DownloadManager {
       if (segmentUrls.length === 0) {
         throw new Error('Tidak ada segmen video ditemukan di playlist M3U8.');
       }
+
+      logger.info('M3U8 SEGMENTS', `Ditemukan ${segmentUrls.length} segmen TS. Memulai unduhan 4x paralel...`);
 
       item.totalSegments = segmentUrls.length;
       if (!item.downloadedSegments) item.downloadedSegments = 0;
@@ -588,10 +650,12 @@ class DownloadManager {
       item.status = 'completed';
       item.speed = 0;
       item.eta = 0;
+      logger.ok('M3U8 DONE', `Stream selesai digabung: ${item.filename}`);
       this.notifyStatus(item);
 
     } catch (err) {
       if (!isAborted) {
+        logger.error('M3U8 FAIL', `Gagal mengunduh stream M3U8 ${item.filename}: ${err.message}`);
         this.activeJobs.delete(item.id);
         item.status = 'error';
         item.error = err.message;

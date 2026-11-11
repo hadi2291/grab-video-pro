@@ -5,14 +5,15 @@ const crypto = require('crypto');
 const { exec } = require('child_process');
 const storage = require('./storage');
 const DownloadManager = require('./downloader');
+const logger = require('./logger');
 
 // Global Crash Guards
 process.on('uncaughtException', (err) => {
-  console.error('[CRASH GUARD] Uncaught Exception:', err.message || err);
+  logger.error('CRASH GUARD', 'Uncaught Exception: ' + (err.message || err), err.stack);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[CRASH GUARD] Unhandled Rejection:', reason);
+  logger.error('CRASH GUARD', 'Unhandled Rejection', String(reason));
 });
 
 const PORT = 54321;
@@ -301,6 +302,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[GrabVideo Windows Engine] Server running on http://127.0.0.1:${PORT}`);
-  console.log(`[GrabVideo Windows Engine] Downloads directory: ${DOWNLOADS_DIR}`);
+  console.log('==================================================================');
+  logger.ok('ENGINE', `GrabVideo Engine AKTIF pada http://127.0.0.1:${PORT}`);
+  logger.info('FOLDER', `Direktori Unduhan: ${DOWNLOADS_DIR}`);
+  logger.info('LOG', `File log tersimpan di: ${path.join(__dirname, 'engine.log')}`);
+  console.log('==================================================================');
+  console.log('Jendela ini menampilkan log live untuk analisis unduhan video.');
+  console.log('');
 });

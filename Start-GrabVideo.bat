@@ -12,8 +12,8 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :54321') do (
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo [1/2] Menjalankan Background Engine GrabVideo (Auto-Restart Guard)...
-start "GrabVideo Engine" /min run-engine.bat
+echo [1/2] Menjalankan Background Engine GrabVideo (Live CMD Logs)...
+start "GrabVideo Engine - Live Logs" run-engine.bat
 
 echo [2/2] Membuka Antarmuka Desktop...
 timeout /t 2 /nobreak >nul
