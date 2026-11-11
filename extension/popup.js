@@ -13,6 +13,34 @@ const emptyState = document.getElementById('emptyState');
 const btnOpenDashboard = document.getElementById('btnOpenDashboard');
 const toastEl = document.getElementById('toast');
 
+function isYoutubeUrl(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const host = new URL(urlStr).hostname.toLowerCase();
+    return host.includes('youtube.com') || host.includes('youtu.be') || host.includes('googlevideo.com');
+  } catch (e) {
+    return false;
+  }
+}
+
+function getEffectiveFilename(item) {
+  const isYoutube = item.isYoutube || isYoutubeUrl(item.url) || (currentTab && isYoutubeUrl(currentTab.url));
+  if (!isYoutube && currentTab && currentTab.title) {
+    const clean = currentTab.title
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120)
+      .replace(/\.(mp4|webm|mkv|m3u8|ts|mp3|m4a|aac|flv|avi|mov|ogg|wav)$/i, '');
+    if (clean && clean.length >= 2 && !/^https?:\/\//i.test(clean) && clean.toLowerCase() !== 'new tab') {
+      const fmt = (item.format || 'mp4').toLowerCase();
+      const ext = (fmt === 'bilibili' || fmt === 'tiktok' || fmt === 'm3u8') ? 'mp4' : fmt;
+      return `${clean}.${ext}`;
+    }
+  }
+  return item.filename || 'video.mp4';
+}
+
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '';
   const k = 1024;
@@ -125,12 +153,13 @@ function renderMedia() {
 
     } else {
       // Generic Video Card
+      const displayName = getEffectiveFilename(item);
       const sizeText = item.size > 0 ? formatBytes(item.size) : (item.format === 'M3U8' ? 'HLS Stream' : 'Ukuran Otomatis');
 
       card.innerHTML = `
         <div class="card-header">
           <div class="title-wrap">
-            <div class="media-title" title="${item.filename}">${item.filename}</div>
+            <div class="media-title" title="${displayName}">${displayName}</div>
             <div class="media-meta">${sizeText}</div>
           </div>
           <span class="format-tag ${item.format}">${item.format}</span>
@@ -178,7 +207,7 @@ async function sendToApp(item) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: item.url,
-        filename: item.filename,
+        filename: getEffectiveFilename(item),
         format: item.format ? item.format.toLowerCase() : null,
         pageTitle: item.pageTitle || (currentTab ? currentTab.title : ''),
         pageUrl: currentTab ? currentTab.url : '',
@@ -203,7 +232,7 @@ async function sendToApp(item) {
 function downloadInBrowser(item) {
   const a = document.createElement('a');
   a.href = item.url;
-  a.download = item.filename || 'video.mp4';
+  a.download = getEffectiveFilename(item);
   a.target = '_blank';
   document.body.appendChild(a);
   a.click();
@@ -226,9 +255,9 @@ btnDownloadAll.addEventListener('click', async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: item.url,
-          filename: item.filename,
+          filename: getEffectiveFilename(item),
           format: item.format ? item.format.toLowerCase() : null,
-          pageTitle: currentTab ? currentTab.title : '',
+          pageTitle: item.pageTitle || (currentTab ? currentTab.title : ''),
           pageUrl: currentTab ? currentTab.url : ''
         })
       });

@@ -4,6 +4,16 @@
   let currentPlatformInfo = null;
   const videoOverlays = new WeakMap(); // videoEl -> { host, dismissed, updatePos }
 
+  function getCleanPageTitle() {
+    const raw = (document.title || '')
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120);
+    if (!raw || raw.length < 2 || /^https?:\/\//i.test(raw)) return '';
+    return raw;
+  }
+
   function detectPlatformInfo() {
     const host = window.location.hostname.toLowerCase();
     const path = window.location.pathname;
@@ -35,11 +45,7 @@
 
     // 2. Bilibili.tv
     if (host.includes('bilibili.tv') && path.includes('/play/')) {
-      let title = document.title.replace(/ - Bilibili.*/i, '').replace(/ \| Bilibili.*/i, '').trim();
-      const epTitleEl = document.querySelector('.video-info__title, h1, .bstar-video-title');
-      if (epTitleEl && epTitleEl.textContent.trim()) {
-        title = epTitleEl.textContent.trim();
-      }
+      const title = getCleanPageTitle() || 'bilibili_anime';
 
       let targetUrl = currentUrl;
       const playMatch = path.match(/\/play\/(\d+)(?:\/(\d+))?/);
@@ -53,8 +59,8 @@
 
       return {
         url: targetUrl,
-        filename: `${title || 'bilibili_anime'}.mp4`,
-        title: title || 'Bilibili Anime',
+        filename: `${title}.mp4`,
+        title: title,
         format: 'BILIBILI',
         platform: 'BILIBILI',
         platformColor: '#00a1d6',
@@ -65,7 +71,7 @@
 
     // 3. TikTok Video Page
     if (host.includes('tiktok.com') && path.includes('/video/')) {
-      const title = document.title.replace(/ \| TikTok/i, '').trim() || 'TikTok Video';
+      const title = getCleanPageTitle() || 'TikTok Video';
       return {
         url: currentUrl,
         filename: `${title}.mp4`,
@@ -260,7 +266,7 @@
         };
       } else {
         const src = video.currentSrc || video.src;
-        const cleanTitle = (document.title || 'video').replace(/[<>:"/\\|?*]/g, '_').trim();
+        const cleanTitle = getCleanPageTitle() || 'video';
         if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
           payloadItem = {
             url: src,
@@ -341,19 +347,24 @@
       if (state) state.updatePos();
 
       if (!isPlatform) {
+        const cleanTitle = getCleanPageTitle();
         const src = v.currentSrc || v.src;
         if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+          const ext = detectExt(src) || 'mp4';
           found.push({
             url: src,
-            format: detectExt(src) || 'mp4'
+            filename: cleanTitle ? `${cleanTitle}.${ext}` : undefined,
+            format: ext
           });
         }
 
         v.querySelectorAll('source').forEach(s => {
           if (s.src && !s.src.startsWith('blob:') && !s.src.startsWith('data:')) {
+            const ext = detectExt(s.src) || (s.type && s.type.includes('webm') ? 'webm' : 'mp4');
             found.push({
               url: s.src,
-              format: detectExt(s.src) || (s.type && s.type.includes('webm') ? 'webm' : 'mp4')
+              filename: cleanTitle ? `${cleanTitle}.${ext}` : undefined,
+              format: ext
             });
           }
         });
@@ -361,13 +372,16 @@
     });
 
     if (!isPlatform) {
+      const cleanTitle = getCleanPageTitle();
       const audios = document.querySelectorAll('audio');
       audios.forEach(a => {
         const src = a.currentSrc || a.src;
         if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+          const ext = detectExt(src) || 'mp3';
           found.push({
             url: src,
-            format: detectExt(src) || 'mp3'
+            filename: cleanTitle ? `${cleanTitle}.${ext}` : undefined,
+            format: ext
           });
         }
       });

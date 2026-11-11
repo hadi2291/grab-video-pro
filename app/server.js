@@ -187,7 +187,30 @@ const server = http.createServer(async (req, res) => {
       detectedFormat = body.format.toLowerCase();
     }
 
-    let cleanFilename = body.filename ? downloader.sanitizeFilename(body.filename) : '';
+    const targetExt = detectedFormat === 'm3u8' ? 'mp4' : detectedFormat;
+    const isYoutube = downloader.isYoutubeUrl(url) || downloader.isYoutubeUrl(body.pageUrl);
+    const rawPageTitle = typeof body.pageTitle === 'string' ? body.pageTitle.trim() : '';
+    const isValidPageTitle = Boolean(
+      rawPageTitle &&
+      rawPageTitle.length >= 2 &&
+      !/^https?:\/\//i.test(rawPageTitle) &&
+      rawPageTitle.toLowerCase() !== 'new tab'
+    );
+
+    let cleanFilename = '';
+    if (!isYoutube && isValidPageTitle) {
+      const strippedTitle = downloader.sanitizeFilename(rawPageTitle)
+        .replace(/\.(mp4|webm|mkv|m3u8|ts|mp3|m4a|aac|flv|avi|mov|ogg|wav)$/i, '')
+        .slice(0, 120)
+        .trim();
+      if (strippedTitle.length >= 2) {
+        cleanFilename = `${strippedTitle}.${targetExt}`;
+      }
+    }
+
+    if (!cleanFilename && body.filename) {
+      cleanFilename = downloader.sanitizeFilename(body.filename);
+    }
     if (!cleanFilename) {
       try {
         const u = new URL(url);
@@ -199,19 +222,35 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!cleanFilename || cleanFilename.length < 3) {
-      cleanFilename = `video_${Date.now()}.${detectedFormat === 'm3u8' ? 'mp4' : detectedFormat}`;
+      cleanFilename = `video_${Date.now()}.${targetExt}`;
     }
 
-    if (!path.extname(cleanFilename)) {
-      cleanFilename += `.${detectedFormat === 'm3u8' ? 'mp4' : detectedFormat}`;
+    if (!/\.(mp4|webm|mkv|m3u8|ts|mp3|m4a|aac|flv|avi|mov|ogg|wav)$/i.test(cleanFilename)) {
+      cleanFilename += `.${targetExt}`;
     }
+
+    const extPart = path.extname(cleanFilename);
+    const basePart = cleanFilename.slice(0, cleanFilename.length - extPart.length);
+    const activeNames = new Set(
+      storage.getAll()
+        .filter(d => d.status !== 'error' && d.status !== 'cancelled')
+        .map(d => d.filename)
+    );
+    let uniqueFilename = cleanFilename;
+    let suffix = 2;
+    while (fs.existsSync(path.join(DOWNLOADS_DIR, uniqueFilename)) || activeNames.has(uniqueFilename)) {
+      uniqueFilename = `${basePart} (${suffix})${extPart}`;
+      suffix++;
+    }
+    cleanFilename = uniqueFilename;
 
     const item = {
       id: crypto.randomUUID(),
       url,
       filename: cleanFilename,
       format: detectedFormat,
-      pageTitle: body.pageTitle || cleanFilename,
+      pageTitle: isValidPageTitle ? rawPageTitle : cleanFilename,
+      hasPageTitle: isValidPageTitle,
       pageUrl: body.pageUrl || '',
       headers: body.headers || {},
       status: 'queued',

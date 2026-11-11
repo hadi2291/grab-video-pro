@@ -42,7 +42,20 @@ class DownloadManager {
   }
 
   sanitizeFilename(name) {
-    return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+    return (name || '')
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  isYoutubeUrl(urlStr) {
+    if (!urlStr) return false;
+    try {
+      const host = new URL(urlStr).hostname.toLowerCase();
+      return host.includes('youtube.com') || host.includes('youtu.be') || host.includes('googlevideo.com');
+    } catch (e) {
+      return false;
+    }
   }
 
   detectExtension(urlStr, contentType = '') {
@@ -180,9 +193,11 @@ class DownloadManager {
     };
 
     const hasFFmpeg = fs.existsSync(path.join(this.binDir, 'ffmpeg.exe'));
+    const isYoutube = this.isYoutubeUrl(item.url) || this.isYoutubeUrl(item.pageUrl);
+    const usePageTitleTemplate = !isYoutube && (forceDirectUrl || Boolean(item.hasPageTitle));
     const rawBase = path.basename(item.filePath || item.filename || 'video', path.extname(item.filePath || item.filename || 'video'));
-    const safeBase = rawBase.replace(/[\\/:*?"<>|%]/g, '_').trim() || 'video';
-    const outTemplate = forceDirectUrl
+    const safeBase = this.sanitizeFilename(rawBase).replace(/%/g, '_').slice(0, 140).trim() || 'video';
+    const outTemplate = usePageTitleTemplate
       ? path.join(this.downloadDir, `${safeBase}.%(ext)s`)
       : path.join(this.downloadDir, '%(title)s.%(ext)s');
     const args = [

@@ -1,6 +1,30 @@
 // GrabVideo - Service Worker Background Sniffer
 const tabMedia = new Map(); // tabId -> Array of media items
 
+function isYoutubeUrl(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const host = new URL(urlStr).hostname.toLowerCase();
+    return host.includes('youtube.com') || host.includes('youtu.be') || host.includes('googlevideo.com');
+  } catch (e) {
+    return false;
+  }
+}
+
+function sanitizeTitleFilename(rawTitle, ext = 'mp4') {
+  const clean = (rawTitle || '')
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  if (!clean || clean.length < 2 || /^https?:\/\//i.test(clean) || clean.toLowerCase() === 'new tab') {
+    return null;
+  }
+  const cleanExt = (ext || 'mp4').replace(/^\./, '').toLowerCase();
+  const withoutTrailingExt = clean.replace(/\.(mp4|webm|mkv|m3u8|ts|mp3|m4a|aac|flv|avi|mov|ogg|wav)$/i, '').trim();
+  return `${withoutTrailingExt || clean}.${cleanExt}`;
+}
+
 function getExtension(url) {
   const clean = url.split('?')[0].toLowerCase();
   const match = clean.match(/\.(mp4|webm|m3u8|ts|mp3|m4a|aac|flv|mkv|mov|ogg|wav)$/i);
@@ -62,32 +86,40 @@ chrome.webRequest.onResponseStarted.addListener(
       return;
     }
 
-    let filename = '';
+    let fallbackFilename = '';
     if (contentDisposition) {
       const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
-      if (match) filename = decodeURIComponent(match[1]);
+      if (match) fallbackFilename = decodeURIComponent(match[1]);
     }
-    if (!filename) {
+    if (!fallbackFilename) {
       try {
         const u = new URL(url);
         const base = u.pathname.split('/').pop();
         if (base && base.length > 2) {
-          filename = decodeURIComponent(base);
+          fallbackFilename = decodeURIComponent(base);
         }
       } catch (e) {}
     }
-    if (!filename) {
-      filename = `media_${Date.now()}.${ext || 'mp4'}`;
+    if (!fallbackFilename) {
+      fallbackFilename = `media_${Date.now()}.${ext || 'mp4'}`;
     }
 
-    addMediaItem(details.tabId, {
-      url,
-      filename,
-      format: (ext || 'mp4').toUpperCase(),
-      size: contentLength,
-      contentType,
-      source: 'network',
-      timestamp: Date.now()
+    const mediaExt = (ext || 'mp4').toLowerCase();
+    chrome.tabs.get(details.tabId, (tab) => {
+      if (chrome.runtime.lastError) return;
+      const usePageTitle = tab && !isYoutubeUrl(tab.url) && !isYoutubeUrl(url);
+      const titleFilename = usePageTitle ? sanitizeTitleFilename(tab.title, mediaExt) : null;
+
+      addMediaItem(details.tabId, {
+        url,
+        filename: titleFilename || fallbackFilename,
+        pageTitle: (tab && tab.title) || '',
+        format: mediaExt.toUpperCase(),
+        size: contentLength,
+        contentType,
+        source: 'network',
+        timestamp: Date.now()
+      });
     });
   },
   { urls: ['<all_urls>'] },
@@ -133,10 +165,24 @@ function updateBadge(tabId) {
 }
 
 // Clear or update tab media on navigation
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     tabMedia.delete(tabId);
     updateBadge(tabId);
+  } else if (changeInfo.title && tab && !isYoutubeUrl(tab.url)) {
+    const list = tabMedia.get(tabId);
+    if (list) {
+      for (const item of list) {
+        if (!item.isYoutube) {
+          const ext = (item.format || 'mp4').toLowerCase();
+          const newName = sanitizeTitleFilename(changeInfo.title, ext);
+          if (newName) {
+            item.filename = newName;
+            item.pageTitle = changeInfo.title;
+          }
+        }
+      }
+    }
   }
 });
 
@@ -155,11 +201,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'DOM_MEDIA_FOUND' && sender.tab) {
     const tabId = sender.tab.id;
+    const usePageTitle = !isYoutubeUrl(sender.tab.url);
     for (const item of message.items) {
+      const fmt = (item.format || 'mp4').toLowerCase();
+      const titleFilename = usePageTitle ? sanitizeTitleFilename(sender.tab.title, fmt) : null;
       addMediaItem(tabId, {
         url: item.url,
-        filename: item.filename || `video_${Date.now()}.mp4`,
-        format: (item.format || 'mp4').toUpperCase(),
+        filename: titleFilename || item.filename || `video_${Date.now()}.${fmt}`,
+        format: fmt.toUpperCase(),
         size: 0,
         contentType: '',
         source: 'dom',
@@ -188,6 +237,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = sender.tab.id;
     let targetItem = message.item || {};
 
+    const isYoutube = isYoutubeUrl(sender.tab.url) || isYoutubeUrl(targetItem.url);
+
     // If video was blob: on generic site, pick best sniffed network stream
     if (!targetItem.url) {
       const list = tabMedia.get(tabId) || [];
@@ -195,13 +246,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const best = list.find(m => m.format === 'M3U8') ||
                      list.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0];
         if (best) {
+          const fmt = (targetItem.format || best.format || 'mp4').toLowerCase();
+          const titleFilename = !isYoutube ? sanitizeTitleFilename(sender.tab.title, fmt === 'm3u8' ? 'mp4' : fmt) : null;
           targetItem = {
             url: best.url,
-            filename: best.filename,
-            format: (best.format || 'mp4').toLowerCase(),
-            pageTitle: sender.tab.title || best.filename
+            filename: titleFilename || targetItem.filename || best.filename,
+            format: fmt,
+            pageTitle: sender.tab.title || targetItem.pageTitle || best.filename
           };
         }
+      }
+    } else if (!isYoutube) {
+      const fmt = (targetItem.format || getExtension(targetItem.url) || 'mp4').toLowerCase();
+      const titleFilename = sanitizeTitleFilename(sender.tab.title, fmt === 'm3u8' ? 'mp4' : fmt);
+      if (titleFilename) {
+        targetItem.filename = titleFilename;
       }
     }
 
