@@ -164,6 +164,7 @@ class DownloadManager {
       '--newline',
       '--no-playlist',
       '--no-colors',
+      '--js-runtimes', `node:${process.execPath}`,
       '--concurrent-fragments', '5',
       '-o', outTemplate
     ];
@@ -173,9 +174,11 @@ class DownloadManager {
       if (item.format === 'mp3') {
         args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
       } else {
-        // Best video + audio merged cleanly into a single MP4 container
-        args.push('-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b');
+        // Prioritize universal H.264 (avc1) + AAC (mp4a) for 100% Windows/Phone compatibility
+        args.push('-S', 'res,vcodec:h264,acodec:m4a');
+        args.push('-f', 'bv*+ba/b');
         args.push('--merge-output-format', 'mp4');
+        args.push('--postprocessor-args', 'Merger+ffmpeg:-c:v copy -c:a aac -b:a 192k');
       }
     } else {
       // Fallback if FFmpeg is absent: download single pre-merged stream (video + audio together)
