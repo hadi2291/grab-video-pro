@@ -51,6 +51,8 @@ downloader.setCallbacks({
   onStatus: (item) => {
     storage.update(item.id, {
       status: item.status,
+      filename: item.filename,
+      format: item.format,
       speed: item.speed,
       eta: item.eta,
       error: item.error,
@@ -197,11 +199,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!cleanFilename || cleanFilename.length < 3) {
-      cleanFilename = `video_${Date.now()}.${detectedFormat === 'm3u8' ? 'ts' : detectedFormat}`;
+      cleanFilename = `video_${Date.now()}.${detectedFormat === 'm3u8' ? 'mp4' : detectedFormat}`;
     }
 
     if (!path.extname(cleanFilename)) {
-      cleanFilename += `.${detectedFormat === 'm3u8' ? 'ts' : detectedFormat}`;
+      cleanFilename += `.${detectedFormat === 'm3u8' ? 'mp4' : detectedFormat}`;
     }
 
     const item = {

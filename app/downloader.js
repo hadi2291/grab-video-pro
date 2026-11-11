@@ -522,10 +522,12 @@ class DownloadManager {
     }
   }
 
-  // --- HLS / M3U8 STREAM DOWNLOADER ---
+  // --- HLS / M3U8 STREAM DOWNLOADER (AUTO-CONVERT TO MP4) ---
   async startM3U8Download(item) {
     let isAborted = false;
     let currentReq = null;
+    const ffmpegPath = path.join(this.binDir, 'ffmpeg.exe');
+    const hasFFmpeg = fs.existsSync(ffmpegPath);
 
     const abortFn = () => {
       isAborted = true;
@@ -535,12 +537,16 @@ class DownloadManager {
     this.activeJobs.set(item.id, { abortFn, item });
 
     try {
-      let ext = path.extname(item.filename);
-      if (!ext || ext.toLowerCase() === '.m3u8') {
-        item.filename = item.filename.replace(/\.m3u8$/i, '') + '.ts';
+      // Determine final filename (.mp4 if FFmpeg is present, otherwise .ts)
+      const targetExt = hasFFmpeg ? '.mp4' : '.ts';
+      item.filename = item.filename.replace(/\.(m3u8|ts)$/i, '') + targetExt;
+      if (!item.filename.toLowerCase().endsWith(targetExt)) {
+        item.filename += targetExt;
       }
-      const filePath = item.filePath || path.join(this.downloadDir, item.filename);
-      item.filePath = filePath;
+
+      const finalFilePath = path.join(this.downloadDir, item.filename);
+      const tempTsPath = hasFFmpeg ? finalFilePath.replace(/\.mp4$/i, '.part.ts') : finalFilePath;
+      item.filePath = finalFilePath;
 
       logger.info('M3U8', `Mengambil playlist M3U8: ${item.url}`);
       const playlistText = await this.fetchText(item.url);
@@ -571,6 +577,14 @@ class DownloadManager {
       }
 
       const mediaPlaylistText = targetPlaylistUrl === item.url ? playlistText : await this.fetchText(targetPlaylistUrl);
+
+      // If AES-128 encrypted or fMP4 (#EXT-X-MAP), delegate to yt-dlp for decryption + MP4 muxing
+      if ((mediaPlaylistText.includes('#EXT-X-KEY') || mediaPlaylistText.includes('#EXT-X-MAP')) && fs.existsSync(this.ytDlpPath)) {
+        logger.info('M3U8 ENCRYPTED', `Playlist terenkripsi/fMP4 terdeteksi, mengalihkan ke engine YT-DLP -> MP4`);
+        this.activeJobs.delete(item.id);
+        return this.startYtDlpDownload(item);
+      }
+
       const mediaLines = mediaPlaylistText.split('\n');
       const segmentUrls = [];
 
@@ -592,7 +606,7 @@ class DownloadManager {
       item.totalBytes = segmentUrls.length;
       item.downloadedBytes = item.downloadedSegments;
 
-      const writeStream = fs.createWriteStream(filePath, {
+      const writeStream = fs.createWriteStream(tempTsPath, {
         flags: item.downloadedSegments > 0 ? 'a' : 'w'
       });
 
@@ -606,7 +620,7 @@ class DownloadManager {
           const req = client.get(segUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Referer': targetPlaylistUrl
+              'Referer': (item.headers && item.headers['Referer']) || targetPlaylistUrl
             }
           }, (res) => {
             if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
@@ -664,12 +678,32 @@ class DownloadManager {
         }
       }
 
-      writeStream.end();
+      // Flush and close temporary TS file before remuxing
+      await new Promise((resolve) => writeStream.end(resolve));
+
+      if (hasFFmpeg && fs.existsSync(tempTsPath)) {
+        logger.info('M3U8 CONVERT', `Mengonversi stream TS ke MP4 menggunakan FFmpeg...`);
+        const converted = await this.convertTsToMp4(ffmpegPath, tempTsPath, finalFilePath);
+        if (converted) {
+          try { fs.unlinkSync(tempTsPath); } catch (e) {}
+          item.format = 'mp4';
+          logger.ok('M3U8 DONE', `Konversi selesai! File MP4 siap diputar: ${item.filename}`);
+        } else {
+          // Fallback: keep TS file if remux failed
+          const fallbackTs = finalFilePath.replace(/\.mp4$/i, '.ts');
+          try { fs.renameSync(tempTsPath, fallbackTs); } catch (e) {}
+          item.filePath = fallbackTs;
+          item.filename = path.basename(fallbackTs);
+          logger.warn('M3U8 WARN', `Konversi MP4 gagal, disimpan sebagai TS: ${item.filename}`);
+        }
+      } else {
+        logger.ok('M3U8 DONE', `Stream selesai digabung: ${item.filename}`);
+      }
+
       this.activeJobs.delete(item.id);
       item.status = 'completed';
       item.speed = 0;
       item.eta = 0;
-      logger.ok('M3U8 DONE', `Stream selesai digabung: ${item.filename}`);
       this.notifyStatus(item);
 
     } catch (err) {
@@ -682,6 +716,43 @@ class DownloadManager {
         this.notifyStatus(item);
       }
     }
+  }
+
+  convertTsToMp4(ffmpegPath, tsPath, mp4Path) {
+    return new Promise((resolve) => {
+      // Fast lossless remux (-c copy -bsf:a aac_adtstoasc)
+      const proc = spawn(ffmpegPath, [
+        '-y',
+        '-i', tsPath,
+        '-c', 'copy',
+        '-bsf:a', 'aac_adtstoasc',
+        mp4Path
+      ], { windowsHide: true });
+
+      proc.on('close', (code) => {
+        if (code === 0 && fs.existsSync(mp4Path)) {
+          return resolve(true);
+        }
+
+        // Fallback if audio is MP3 or non-ADTS AAC: copy video, transcode audio to AAC
+        logger.warn('FFMPEG RETRY', 'Mencoba konversi ulang dengan encoding audio AAC...');
+        const proc2 = spawn(ffmpegPath, [
+          '-y',
+          '-i', tsPath,
+          '-c:v', 'copy',
+          '-c:a', 'aac',
+          '-b:a', '192k',
+          mp4Path
+        ], { windowsHide: true });
+
+        proc2.on('close', (code2) => {
+          resolve(code2 === 0 && fs.existsSync(mp4Path));
+        });
+        proc2.on('error', () => resolve(false));
+      });
+
+      proc.on('error', () => resolve(false));
+    });
   }
 
   fetchText(urlStr) {
