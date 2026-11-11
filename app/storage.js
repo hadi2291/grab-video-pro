@@ -73,6 +73,22 @@ class Storage {
     }
     return null;
   }
+
+  removeMany(ids) {
+    const idSet = new Set(ids);
+    const removed = [];
+    this.items = this.items.filter(item => {
+      if (idSet.has(item.id)) {
+        removed.push(item);
+        return false;
+      }
+      return true;
+    });
+    if (removed.length > 0) {
+      this.save();
+    }
+    return removed;
+  }
 }
 
 module.exports = new Storage();

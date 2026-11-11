@@ -316,6 +316,28 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // API: Bulk delete downloads
+  if (req.method === 'POST' && pathname === '/api/downloads/bulk-delete') {
+    const body = await parseBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids : [];
+    const deletePhysicalFile = Boolean(body.deleteFile);
+
+    if (ids.length === 0) {
+      return sendJson(res, 400, { error: 'Daftar ID yang akan dihapus kosong.' });
+    }
+
+    const existingItems = ids.map(id => storage.getById(id)).filter(Boolean);
+    for (const item of existingItems) {
+      downloader.delete(item, deletePhysicalFile);
+    }
+
+    const removed = storage.removeMany(existingItems.map(i => i.id));
+    const removedIds = removed.map(i => i.id);
+    broadcastEvent('bulk-removed', { ids: removedIds, deleteFile: deletePhysicalFile });
+
+    return sendJson(res, 200, { success: true, deletedCount: removedIds.length, ids: removedIds });
+  }
+
   // API: Delete download
   const deleteMatch = pathname.match(/^\/api\/downloads\/([^/]+)$/);
   if (deleteMatch && req.method === 'DELETE') {

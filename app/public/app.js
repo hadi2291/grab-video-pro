@@ -2,7 +2,8 @@
 let downloads = [];
 let currentFilter = 'all';
 let searchQuery = '';
-let itemToDelete = null;
+let selectedIds = new Set();
+let deleteTargetIds = [];
 
 // DOM Elements
 const downloadList = document.getElementById('downloadList');
@@ -26,8 +27,15 @@ const deleteModal = document.getElementById('deleteModal');
 const btnCloseDeleteModal = document.getElementById('btnCloseDeleteModal');
 const btnCancelDelete = document.getElementById('btnCancelDelete');
 const btnConfirmDelete = document.getElementById('btnConfirmDelete');
+const deleteModalTitle = document.getElementById('deleteModalTitle');
+const deleteModalDesc = document.getElementById('deleteModalDesc');
 const deleteItemTitle = document.getElementById('deleteItemTitle');
 const checkDeletePhysicalFile = document.getElementById('checkDeletePhysicalFile');
+const selectionBar = document.getElementById('selectionBar');
+const checkSelectAll = document.getElementById('checkSelectAll');
+const selectedCounter = document.getElementById('selectedCounter');
+const btnBulkDelete = document.getElementById('btnBulkDelete');
+const btnBulkDeleteText = document.getElementById('btnBulkDeleteText');
 
 // Format Helpers
 function formatBytes(bytes) {
@@ -120,7 +128,18 @@ function setupSSE() {
 
   es.addEventListener('removed', (e) => {
     const { id } = JSON.parse(e.data);
+    selectedIds.delete(id);
     downloads = downloads.filter(d => d.id !== id);
+    render();
+  });
+
+  es.addEventListener('bulk-removed', (e) => {
+    const { ids } = JSON.parse(e.data);
+    const idSet = new Set(ids || []);
+    for (const id of idSet) {
+      selectedIds.delete(id);
+    }
+    downloads = downloads.filter(d => !idSet.has(d.id));
     render();
   });
 
@@ -185,18 +204,13 @@ function updateStats() {
   statSpeed.textContent = formatSpeed(totalSpeedBytes);
 }
 
-// Render Main Download List
-function render() {
-  updateStats();
-
-  const filtered = downloads.filter(item => {
-    // Filter by tab
+function getFilteredDownloads() {
+  return downloads.filter(item => {
     if (currentFilter === 'downloading' && item.status !== 'downloading') return false;
     if (currentFilter === 'paused' && item.status !== 'paused') return false;
     if (currentFilter === 'completed' && item.status !== 'completed') return false;
     if (currentFilter === 'cancelled' && item.status !== 'cancelled' && item.status !== 'error') return false;
 
-    // Filter by search
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       const matchName = (item.filename || '').toLowerCase().includes(q);
@@ -207,10 +221,37 @@ function render() {
 
     return true;
   });
+}
+
+function updateSelectionBar() {
+  const validIds = new Set(downloads.map(d => d.id));
+  for (const id of Array.from(selectedIds)) {
+    if (!validIds.has(id)) selectedIds.delete(id);
+  }
+
+  const filtered = getFilteredDownloads();
+  selectionBar.style.display = filtered.length > 0 ? 'flex' : 'none';
+
+  const visibleSelectedCount = filtered.filter(d => selectedIds.has(d.id)).length;
+  checkSelectAll.checked = filtered.length > 0 && visibleSelectedCount === filtered.length;
+  checkSelectAll.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < filtered.length;
+
+  selectedCounter.textContent = `(${selectedIds.size} dipilih)`;
+  btnBulkDelete.disabled = selectedIds.size === 0;
+  btnBulkDeleteText.textContent = selectedIds.size > 0
+    ? `Hapus Terpilih (${selectedIds.size})`
+    : 'Hapus Terpilih';
+}
+
+// Render Main Download List
+function render() {
+  updateStats();
+
+  const filtered = getFilteredDownloads();
+  updateSelectionBar();
 
   if (filtered.length === 0) {
     emptyState.style.display = 'flex';
-    // Remove existing cards
     const existing = downloadList.querySelectorAll('.download-card');
     existing.forEach(c => c.remove());
     return;
@@ -218,7 +259,6 @@ function render() {
 
   emptyState.style.display = 'none';
 
-  // Build HTML for all cards
   const existingCards = downloadList.querySelectorAll('.download-card');
   existingCards.forEach(c => c.remove());
 
@@ -238,8 +278,9 @@ function createCardElement(item) {
     percentage = 100;
   }
 
+  const isSelected = selectedIds.has(item.id);
   const card = document.createElement('div');
-  card.className = 'download-card';
+  card.className = isSelected ? 'download-card selected' : 'download-card';
   card.setAttribute('data-id', item.id);
 
   const formatClass = (item.format || 'mp4').toLowerCase();
@@ -276,6 +317,7 @@ function createCardElement(item) {
   card.innerHTML = `
     <div class="card-top">
       <div class="file-info">
+        <input type="checkbox" class="item-checkbox" data-id="${item.id}" ${isSelected ? 'checked' : ''} title="Pilih item ini">
         <div class="file-format-badge ${formatClass}">${item.format || 'MP4'}</div>
         <div class="file-text">
           <div class="file-name" title="${item.filename}">${item.filename}</div>
@@ -318,6 +360,17 @@ function createCardElement(item) {
       </div>
     </div>
   `;
+
+  const checkbox = card.querySelector('.item-checkbox');
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) {
+      selectedIds.add(item.id);
+    } else {
+      selectedIds.delete(item.id);
+    }
+    card.classList.toggle('selected', checkbox.checked);
+    updateSelectionBar();
+  });
 
   return card;
 }
@@ -366,28 +419,86 @@ async function openFolder(id) {
   }
 }
 
-// Delete Confirmation
+// Delete Confirmation (Single & Bulk)
 function showDeleteConfirm(id) {
-  itemToDelete = downloads.find(d => d.id === id);
-  if (!itemToDelete) return;
+  const item = downloads.find(d => d.id === id);
+  if (!item) return;
 
-  deleteItemTitle.textContent = itemToDelete.filename;
+  deleteTargetIds = [id];
+  deleteModalTitle.textContent = 'Hapus Unduhan';
+  deleteModalDesc.textContent = 'Apakah Anda yakin ingin menghapus item ini dari daftar riwayat?';
+  deleteItemTitle.textContent = item.filename;
   checkDeletePhysicalFile.checked = false;
   deleteModal.classList.add('active');
 }
 
+function showBulkDeleteConfirm() {
+  if (selectedIds.size === 0) return;
+
+  deleteTargetIds = Array.from(selectedIds);
+  deleteModalTitle.textContent = 'Hapus Riwayat Terpilih';
+  deleteModalDesc.textContent = 'Apakah Anda yakin ingin menghapus seluruh item terpilih dari daftar riwayat?';
+  deleteItemTitle.textContent = `${deleteTargetIds.length} video dipilih`;
+  checkDeletePhysicalFile.checked = false;
+  deleteModal.classList.add('active');
+}
+
+checkSelectAll.addEventListener('change', () => {
+  const filtered = getFilteredDownloads();
+  for (const item of filtered) {
+    if (checkSelectAll.checked) {
+      selectedIds.add(item.id);
+    } else {
+      selectedIds.delete(item.id);
+    }
+  }
+
+  downloadList.querySelectorAll('.download-card').forEach(card => {
+    const id = card.getAttribute('data-id');
+    const isSelected = selectedIds.has(id);
+    card.classList.toggle('selected', isSelected);
+    const cb = card.querySelector('.item-checkbox');
+    if (cb) cb.checked = isSelected;
+  });
+
+  updateSelectionBar();
+});
+
+btnBulkDelete.addEventListener('click', showBulkDeleteConfirm);
+
 btnConfirmDelete.addEventListener('click', async () => {
-  if (!itemToDelete) return;
+  if (deleteTargetIds.length === 0) return;
   const deletePhysical = checkDeletePhysicalFile.checked;
 
   try {
-    const res = await fetch(`/api/downloads/${itemToDelete.id}?deleteFile=${deletePhysical}`, {
-      method: 'DELETE'
-    });
+    let res;
+    if (deleteTargetIds.length === 1) {
+      res = await fetch(`/api/downloads/${deleteTargetIds[0]}?deleteFile=${deletePhysical}`, {
+        method: 'DELETE'
+      });
+    } else {
+      res = await fetch('/api/downloads/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: deleteTargetIds,
+          deleteFile: deletePhysical
+        })
+      });
+    }
+
     if (res.ok) {
-      showToast('Item berhasil dihapus', 'success');
+      const count = deleteTargetIds.length;
+      for (const id of deleteTargetIds) {
+        selectedIds.delete(id);
+      }
+      showToast(count > 1 ? `${count} riwayat berhasil dihapus` : 'Item berhasil dihapus', 'success');
       deleteModal.classList.remove('active');
-      itemToDelete = null;
+      deleteTargetIds = [];
+      updateSelectionBar();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || 'Gagal menghapus item', 'error');
     }
   } catch (err) {
     showToast('Gagal menghapus item', 'error');
