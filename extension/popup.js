@@ -41,6 +41,84 @@ function getEffectiveFilename(item) {
   return item.filename || 'video.mp4';
 }
 
+const PRESET_RESOLUTIONS = [
+  { value: 'auto', label: 'Terbaik (Auto)' },
+  { value: '2160', label: '2160p (4K)' },
+  { value: '1440', label: '1440p (2K)' },
+  { value: '1080', label: '1080p (Full HD)' },
+  { value: '720', label: '720p (HD)' },
+  { value: '480', label: '480p (SD)' },
+  { value: '360', label: '360p' }
+];
+
+const AUDIO_ONLY_FORMATS = new Set(['MP3', 'M4A', 'AAC', 'WAV', 'OGG']);
+
+function isAudioOnlyItem(item) {
+  return AUDIO_ONLY_FORMATS.has((item.format || '').toUpperCase());
+}
+
+function populateResolutionOptions(selectEl, options, selectedValue) {
+  const current = selectedValue || 'auto';
+  selectEl.innerHTML = '';
+  for (const opt of options) {
+    const el = document.createElement('option');
+    el.value = opt.value;
+    el.textContent = opt.label;
+    if (opt.value === current) el.selected = true;
+    selectEl.appendChild(el);
+  }
+}
+
+function attachResolutionControl(item, card, actionsEl) {
+  if (isAudioOnlyItem(item)) return null;
+
+  const row = document.createElement('div');
+  row.className = 'resolution-row';
+
+  const label = document.createElement('span');
+  label.className = 'res-label';
+  label.textContent = 'Resolusi';
+
+  const select = document.createElement('select');
+  select.className = 'res-select';
+  select.title = 'Pilih Resolusi Video';
+
+  if (!item.selectedResolution) item.selectedResolution = 'auto';
+  populateResolutionOptions(select, PRESET_RESOLUTIONS, item.selectedResolution);
+
+  select.addEventListener('change', () => {
+    item.selectedResolution = select.value;
+  });
+
+  row.appendChild(label);
+  row.appendChild(select);
+  card.insertBefore(row, actionsEl);
+
+  if (isEngineOnline && (item.isPlatform || item.isYoutube || item.format === 'M3U8')) {
+    hydrateRealResolutions(item, select, label);
+  }
+
+  return select;
+}
+
+async function hydrateRealResolutions(item, selectEl, labelEl) {
+  try {
+    const res = await fetch(`${ENGINE_URL}/api/formats?url=${encodeURIComponent(item.url)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.resolutions) && data.resolutions.length > 0) {
+      const merged = [
+        { value: 'auto', label: 'Terbaik (Auto)' },
+        ...data.resolutions
+      ];
+      const keep = merged.some(o => o.value === item.selectedResolution) ? item.selectedResolution : 'auto';
+      item.selectedResolution = keep;
+      populateResolutionOptions(selectEl, merged, keep);
+      if (labelEl) labelEl.textContent = `Resolusi (${data.resolutions.length})`;
+    }
+  } catch (e) {}
+}
+
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '';
   const k = 1024;
@@ -129,11 +207,15 @@ function renderMedia() {
         </div>
       `;
 
+      const actionsEl = card.querySelector('.card-actions');
+      const resSelect = attachResolutionControl(item, card, actionsEl);
+
       const btnMp4 = card.querySelector('.btn-yt-mp4');
       btnMp4.addEventListener('click', () => sendToApp({
         url: item.url,
         filename: `${item.title || 'video'}.mp4`,
         format: 'mp4',
+        resolution: resSelect ? resSelect.value : 'auto',
         pageTitle: item.title
       }));
 
@@ -177,8 +259,14 @@ function renderMedia() {
         </div>
       `;
 
+      const actionsEl = card.querySelector('.card-actions');
+      const resSelect = attachResolutionControl(item, card, actionsEl);
+
       const btnApp = card.querySelector('.btn-action-primary');
-      btnApp.addEventListener('click', () => sendToApp(item));
+      btnApp.addEventListener('click', () => sendToApp({
+        ...item,
+        resolution: resSelect ? resSelect.value : 'auto'
+      }));
 
       const btnBrowser = card.querySelector('.btn-browser');
       btnBrowser.addEventListener('click', () => downloadInBrowser(item));
@@ -209,6 +297,7 @@ async function sendToApp(item) {
         url: item.url,
         filename: getEffectiveFilename(item),
         format: item.format ? item.format.toLowerCase() : null,
+        resolution: item.resolution || item.selectedResolution || 'auto',
         pageTitle: item.pageTitle || (currentTab ? currentTab.title : ''),
         pageUrl: currentTab ? currentTab.url : '',
         headers: {
@@ -257,6 +346,7 @@ btnDownloadAll.addEventListener('click', async () => {
           url: item.url,
           filename: getEffectiveFilename(item),
           format: item.format ? item.format.toLowerCase() : null,
+          resolution: item.selectedResolution || 'auto',
           pageTitle: item.pageTitle || (currentTab ? currentTab.title : ''),
           pageUrl: currentTab ? currentTab.url : ''
         })
@@ -282,5 +372,6 @@ function showToast(text, duration = 2500) {
 }
 
 // Init
-checkEngine();
-loadMedia();
+checkEngine().then(() => {
+  loadMedia();
+});

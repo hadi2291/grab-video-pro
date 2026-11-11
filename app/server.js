@@ -168,6 +168,16 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { success: true });
   }
 
+  // API: Inspect available video resolutions for URL
+  if (req.method === 'GET' && pathname === '/api/formats') {
+    const targetUrl = (reqUrl.searchParams.get('url') || '').trim();
+    if (!targetUrl) {
+      return sendJson(res, 400, { error: 'Parameter url diperlukan.' });
+    }
+    const resolutions = await downloader.getAvailableResolutions(targetUrl);
+    return sendJson(res, 200, { url: targetUrl, resolutions });
+  }
+
   // API: Get all downloads
   if (req.method === 'GET' && pathname === '/api/downloads') {
     return sendJson(res, 200, storage.getAll());
@@ -249,6 +259,7 @@ const server = http.createServer(async (req, res) => {
       url,
       filename: cleanFilename,
       format: detectedFormat,
+      resolution: typeof body.resolution === 'string' && body.resolution.trim() ? body.resolution.trim() : 'auto',
       pageTitle: isValidPageTitle ? rawPageTitle : cleanFilename,
       hasPageTitle: isValidPageTitle,
       pageUrl: body.pageUrl || '',

@@ -165,8 +165,22 @@
           background: linear-gradient(135deg, #8b5cf6, #6366f1);
           display: none;
         }
-        .gv-bar:hover .gv-btn.mp3 {
+        .gv-bar:hover .gv-btn.mp3,
+        .gv-bar:hover .gv-res {
           display: inline-flex;
+        }
+        .gv-res {
+          display: none;
+          background: rgba(30, 41, 59, 0.95);
+          color: #f8fafc;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 9999px;
+          padding: 4px 8px;
+          font-size: 11px;
+          font-weight: 600;
+          outline: none;
+          cursor: pointer;
+          font-family: inherit;
         }
         .gv-btn.success {
           background: linear-gradient(135deg, #10b981, #059669);
@@ -209,6 +223,15 @@
           </svg>
           <span class="label">Unduh Video</span>
         </button>
+        <select class="gv-res" title="Pilih Resolusi">
+          <option value="auto">Auto</option>
+          <option value="2160">4K</option>
+          <option value="1440">1440p</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+          <option value="360">360p</option>
+        </select>
         <button class="gv-btn mp3" title="Unduh audio MP3">
           🎵 MP3
         </button>
@@ -250,11 +273,18 @@
 
     const btnMp4 = shadow.querySelector('.gv-btn.mp4');
     const labelMp4 = btnMp4.querySelector('.label');
+    const resSelect = shadow.querySelector('.gv-res');
     const btnMp3 = shadow.querySelector('.gv-btn.mp3');
     const btnClose = shadow.querySelector('.gv-close');
 
+    if (resSelect) {
+      resSelect.addEventListener('click', (e) => e.stopPropagation());
+      resSelect.addEventListener('mousedown', (e) => e.stopPropagation());
+    }
+
     function triggerDownload(format, targetBtn, targetLabel, defaultText) {
       const platform = detectPlatformInfo();
+      const selectedRes = (resSelect && format !== 'mp3') ? resSelect.value : 'auto';
       let payloadItem = {};
 
       if (platform && platform !== 'WAIT') {
@@ -262,6 +292,7 @@
           url: platform.url,
           filename: `${platform.title}.${format}`,
           format: format,
+          resolution: selectedRes,
           pageTitle: platform.title
         };
       } else {
@@ -272,6 +303,7 @@
             url: src,
             filename: `${cleanTitle}.${format}`,
             format: format,
+            resolution: selectedRes,
             pageTitle: document.title
           };
         } else {
@@ -280,6 +312,7 @@
             url: '',
             filename: `${cleanTitle}.${format}`,
             format: format,
+            resolution: selectedRes,
             pageTitle: document.title
           };
         }

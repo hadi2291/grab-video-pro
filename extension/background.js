@@ -252,6 +252,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             url: best.url,
             filename: titleFilename || targetItem.filename || best.filename,
             format: fmt,
+            resolution: targetItem.resolution || 'auto',
             pageTitle: sender.tab.title || targetItem.pageTitle || best.filename
           };
         }
@@ -276,6 +277,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         url: targetItem.url,
         filename: targetItem.filename || `${sender.tab.title || 'video'}.mp4`,
         format: targetItem.format || null,
+        resolution: targetItem.resolution || 'auto',
         pageTitle: targetItem.pageTitle || sender.tab.title || '',
         pageUrl: sender.tab.url || '',
         headers: {

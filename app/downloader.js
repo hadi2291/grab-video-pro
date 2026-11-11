@@ -14,8 +14,145 @@ class DownloadManager {
     this.ensureDir(this.downloadDir);
     this.ensureDir(this.binDir);
     this.activeJobs = new Map(); // id -> { controller, abortFn, item, process }
+    this.formatsCache = new Map(); // url -> { expiresAt, resolutions }
     this.onProgressCallback = null;
     this.onStatusCallback = null;
+  }
+
+  parseResolutionHeight(resValue) {
+    if (!resValue) return null;
+    const raw = String(resValue).trim().toLowerCase();
+    if (!raw || raw === 'auto' || raw === 'best') return null;
+    const match = raw.match(/^(\d{3,4})/);
+    if (!match) return null;
+    const val = parseInt(match[1], 10);
+    return Number.isFinite(val) && val >= 144 ? val : null;
+  }
+
+  parseM3U8Variants(playlistText, baseUrl) {
+    const lines = playlistText.split('\n');
+    const variants = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+
+      const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
+      const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/i);
+      const bandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+      const width = resMatch ? parseInt(resMatch[1], 10) : null;
+      const height = resMatch ? parseInt(resMatch[2], 10) : null;
+      const resP = height ? Math.min(width || height, height) : null;
+
+      let uriLine = '';
+      for (let j = i + 1; j < lines.length; j++) {
+        const candidate = lines[j].trim();
+        if (!candidate) continue;
+        if (candidate.startsWith('#')) continue;
+        uriLine = candidate;
+        break;
+      }
+
+      if (uriLine) {
+        variants.push({
+          uri: new URL(uriLine, baseUrl).href,
+          bandwidth,
+          width,
+          height,
+          resP
+        });
+      }
+    }
+
+    return variants;
+  }
+
+  async getAvailableResolutions(targetUrl) {
+    if (!targetUrl) return [];
+    const now = Date.now();
+    const cached = this.formatsCache.get(targetUrl);
+    if (cached && cached.expiresAt > now) {
+      return cached.resolutions;
+    }
+
+    let resolutions = [];
+    try {
+      const isM3U8 = targetUrl.toLowerCase().includes('.m3u8');
+      if (isM3U8) {
+        const playlistText = await this.fetchText(targetUrl);
+        if (playlistText.includes('#EXT-X-STREAM-INF')) {
+          const variants = this.parseM3U8Variants(playlistText, targetUrl);
+          const byHeight = new Map();
+          for (const v of variants) {
+            if (!v.resP) continue;
+            const prev = byHeight.get(v.resP);
+            if (!prev || v.bandwidth > prev.bandwidth) {
+              byHeight.set(v.resP, v);
+            }
+          }
+          resolutions = Array.from(byHeight.values())
+            .sort((a, b) => b.resP - a.resP)
+            .map(v => ({
+              value: String(v.resP),
+              label: v.width && v.height ? `${v.resP}p (${v.width}x${v.height})` : `${v.resP}p`
+            }));
+        }
+      } else if (this.isSocialOrStreamingUrl(targetUrl) && fs.existsSync(this.ytDlpPath)) {
+        resolutions = await new Promise((resolve) => {
+          const args = [
+            '--dump-single-json',
+            '--no-playlist',
+            '--no-warnings',
+            '--js-runtimes', `node:${process.execPath}`,
+            targetUrl
+          ];
+          const proc = spawn(this.ytDlpPath, args, { windowsHide: true });
+          let out = '';
+          const timer = setTimeout(() => {
+            try { proc.kill('SIGKILL'); } catch (e) {}
+            resolve([]);
+          }, 12000);
+
+          proc.stdout.on('data', (chunk) => { out += chunk.toString(); });
+          proc.on('close', (code) => {
+            clearTimeout(timer);
+            if (code !== 0 || !out.trim()) return resolve([]);
+            try {
+              const info = JSON.parse(out);
+              const formats = Array.isArray(info.formats) ? info.formats : [];
+              const heights = new Set();
+              for (const f of formats) {
+                if (f.vcodec && f.vcodec !== 'none' && f.height) {
+                  const p = Math.min(f.width || f.height, f.height);
+                  if (p >= 144) heights.add(p);
+                }
+              }
+              const list = Array.from(heights)
+                .sort((a, b) => b - a)
+                .map(h => ({
+                  value: String(h),
+                  label: h >= 2160 ? `${h}p (4K)` : h >= 1440 ? `${h}p (2K)` : h === 1080 ? '1080p (Full HD)' : h === 720 ? '720p (HD)' : `${h}p`
+                }));
+              resolve(list);
+            } catch (e) {
+              resolve([]);
+            }
+          });
+          proc.on('error', () => {
+            clearTimeout(timer);
+            resolve([]);
+          });
+        });
+      }
+    } catch (e) {
+      resolutions = [];
+    }
+
+    this.formatsCache.set(targetUrl, {
+      expiresAt: now + 5 * 60 * 1000,
+      resolutions
+    });
+    return resolutions;
   }
 
   ensureDir(dir) {
@@ -214,14 +351,21 @@ class DownloadManager {
       args.push('--referer', referer);
     }
 
+    const targetHeight = this.parseResolutionHeight(item.resolution);
+
     if (hasFFmpeg) {
       args.push('--ffmpeg-location', this.binDir);
       if (item.format === 'mp3') {
         args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
       } else {
-        // Prioritize universal H.264 (avc1) + AAC (mp4a) for 100% Windows/Phone compatibility
-        args.push('-S', 'res,vcodec:h264,acodec:m4a');
-        args.push('-f', 'bv*+ba/b');
+        // Prioritize requested resolution (or best) + universal H.264 (avc1) + AAC (mp4a)
+        if (targetHeight) {
+          args.push('-S', `res:${targetHeight},vcodec:h264,acodec:m4a`);
+          args.push('-f', `bv*[height<=${targetHeight}]+ba/b[height<=${targetHeight}]/bv*+ba/b`);
+        } else {
+          args.push('-S', 'res,vcodec:h264,acodec:m4a');
+          args.push('-f', 'bv*+ba/b');
+        }
         args.push('--merge-output-format', 'mp4');
         args.push('--postprocessor-args', 'Merger+ffmpeg:-c:v copy -c:a aac -b:a 192k');
       }
@@ -229,6 +373,8 @@ class DownloadManager {
       // Fallback if FFmpeg is absent: download single pre-merged stream (video + audio together)
       if (item.format === 'mp3') {
         args.push('-f', 'ba[ext=m4a]/ba/bestaudio');
+      } else if (targetHeight) {
+        args.push('-f', `b[height<=${targetHeight}][ext=mp4]/b[height<=${targetHeight}]/b[ext=mp4]/best`);
       } else {
         args.push('-f', 'b[ext=mp4]/b/best[ext=mp4]/best');
       }
@@ -593,26 +739,29 @@ class DownloadManager {
       let targetPlaylistUrl = item.url;
 
       if (playlistText.includes('#EXT-X-STREAM-INF')) {
-        const lines = playlistText.split('\n');
-        let highestBandwidth = -1;
-        let highestUri = '';
+        const variants = this.parseM3U8Variants(playlistText, item.url);
+        const targetHeight = this.parseResolutionHeight(item.resolution);
+        let chosen = null;
 
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line.startsWith('#EXT-X-STREAM-INF')) {
-            const bwMatch = line.match(/BANDWIDTH=(\d+)/);
-            const bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
-            const nextLine = (lines[i + 1] || '').trim();
-            if (nextLine && !nextLine.startsWith('#') && bw >= highestBandwidth) {
-              highestBandwidth = bw;
-              highestUri = nextLine;
+        if (variants.length > 0) {
+          if (targetHeight) {
+            const withRes = variants.filter(v => v.resP !== null);
+            const matching = withRes.filter(v => v.resP <= targetHeight);
+            if (matching.length > 0) {
+              chosen = matching.sort((a, b) => (b.resP - a.resP) || (b.bandwidth - a.bandwidth))[0];
+            } else if (withRes.length > 0) {
+              chosen = withRes.sort((a, b) => (a.resP - b.resP) || (a.bandwidth - b.bandwidth))[0];
             }
+          }
+          if (!chosen) {
+            chosen = variants.slice().sort((a, b) => ((b.resP || 0) - (a.resP || 0)) || (b.bandwidth - a.bandwidth))[0];
           }
         }
 
-        if (highestUri) {
-          targetPlaylistUrl = new URL(highestUri, item.url).href;
-          logger.info('M3U8 MASTER', `Memilih resolusi tertinggi (Bandwidth: ${highestBandwidth}): ${targetPlaylistUrl}`);
+        if (chosen) {
+          targetPlaylistUrl = chosen.uri;
+          const resDesc = chosen.width && chosen.height ? `${chosen.width}x${chosen.height}, ` : '';
+          logger.info('M3U8 MASTER', `Memilih varian (${resDesc}Bandwidth: ${chosen.bandwidth}): ${targetPlaylistUrl}`);
         }
       }
 

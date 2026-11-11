@@ -234,6 +234,42 @@ body {
   margin-top: 2px;
 }
 
+.resolution-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.res-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.res-select {
+  flex: 1;
+  min-width: 0;
+  background: #1c263c;
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+
+.res-select:focus {
+  border-color: #3b82f6;
+}
+
 .btn-action-primary {
   flex: 1;
   background: linear-gradient(135deg, #3b82f6, #2563eb);
