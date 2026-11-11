@@ -183,4 +183,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
+
+  if (message.type === 'TRIGGER_INLINE_DOWNLOAD' && sender.tab) {
+    const tabId = sender.tab.id;
+    let targetItem = message.item || {};
+
+    // If video was blob: on generic site, pick best sniffed network stream
+    if (!targetItem.url) {
+      const list = tabMedia.get(tabId) || [];
+      if (list.length > 0) {
+        const best = list.find(m => m.format === 'M3U8') ||
+                     list.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0];
+        if (best) {
+          targetItem = {
+            url: best.url,
+            filename: best.filename,
+            format: (best.format || 'mp4').toLowerCase(),
+            pageTitle: sender.tab.title || best.filename
+          };
+        }
+      }
+    }
+
+    if (!targetItem.url) {
+      sendResponse({ ok: false, error: 'Putar video sebentar agar stream terdeteksi.' });
+      return true;
+    }
+
+    fetch('http://127.0.0.1:54321/api/downloads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: targetItem.url,
+        filename: targetItem.filename || `${sender.tab.title || 'video'}.mp4`,
+        format: targetItem.format || null,
+        pageTitle: targetItem.pageTitle || sender.tab.title || '',
+        pageUrl: sender.tab.url || '',
+        headers: {
+          'Referer': sender.tab.url || ''
+        }
+      })
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          sendResponse({ ok: true });
+        } else {
+          const data = await res.json().catch(() => ({}));
+          sendResponse({ ok: false, error: data.error || 'Gagal mengirim ke App' });
+        }
+      })
+      .catch(() => {
+        sendResponse({ ok: false, error: 'Buka aplikasi GrabVideo Windows dulu!' });
+      });
+
+    return true; // keep message channel open for async fetch
+  }
 });

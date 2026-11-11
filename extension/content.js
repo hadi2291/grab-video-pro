@@ -1,8 +1,10 @@
-// GrabVideo Content Script - Inspects page DOM for HTML5 media elements & Supported Platforms
+// GrabVideo Content Script - Sniffer + Floating In-Page Video Download Button
 (function() {
   let lastDetectedUrl = '';
+  let currentPlatformInfo = null;
+  const videoOverlays = new WeakMap(); // videoEl -> { host, dismissed, updatePos }
 
-  function checkSupportedPlatforms() {
+  function detectPlatformInfo() {
     const host = window.location.hostname.toLowerCase();
     const path = window.location.pathname;
     const currentUrl = window.location.href;
@@ -10,22 +12,16 @@
     // 1. YouTube
     if (host.includes('youtube.com') || host.includes('youtu.be')) {
       const isWatch = path === '/watch' || path.startsWith('/shorts/');
-      if (!isWatch) return false;
-      if (currentUrl === lastDetectedUrl) return true;
+      if (!isWatch) return null;
 
       let title = document.title.replace(' - YouTube', '').trim();
       const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.title yt-formatted-string, #title h1');
       if (titleEl && titleEl.textContent.trim()) {
         title = titleEl.textContent.trim();
       }
+      if (!title || title === 'YouTube') return 'WAIT';
 
-      if (!title || title === 'YouTube') {
-        setTimeout(checkSupportedPlatforms, 1000);
-        return true;
-      }
-
-      lastDetectedUrl = currentUrl;
-      sendPlatformMedia({
+      return {
         url: currentUrl,
         filename: `${title}.mp4`,
         title: title,
@@ -34,21 +30,17 @@
         platformColor: '#ef4444',
         isYoutube: true,
         isPlatform: true
-      });
-      return true;
+      };
     }
 
     // 2. Bilibili.tv
     if (host.includes('bilibili.tv') && path.includes('/play/')) {
-      if (currentUrl === lastDetectedUrl) return true;
-
       let title = document.title.replace(/ - Bilibili.*/i, '').replace(/ \| Bilibili.*/i, '').trim();
       const epTitleEl = document.querySelector('.video-info__title, h1, .bstar-video-title');
       if (epTitleEl && epTitleEl.textContent.trim()) {
         title = epTitleEl.textContent.trim();
       }
 
-      // If URL is series-only (/play/2432940), try to find the active episode URL from DOM
       let targetUrl = currentUrl;
       const playMatch = path.match(/\/play\/(\d+)(?:\/(\d+))?/);
       if (playMatch && !playMatch[2]) {
@@ -59,8 +51,7 @@
         }
       }
 
-      lastDetectedUrl = currentUrl;
-      sendPlatformMedia({
+      return {
         url: targetUrl,
         filename: `${title || 'bilibili_anime'}.mp4`,
         title: title || 'Bilibili Anime',
@@ -69,16 +60,13 @@
         platformColor: '#00a1d6',
         isPlatform: true,
         hasSubtitles: true
-      });
-      return true;
+      };
     }
 
     // 3. TikTok Video Page
     if (host.includes('tiktok.com') && path.includes('/video/')) {
-      if (currentUrl === lastDetectedUrl) return true;
-      let title = document.title.replace(/ \| TikTok/i, '').trim() || 'TikTok Video';
-      lastDetectedUrl = currentUrl;
-      sendPlatformMedia({
+      const title = document.title.replace(/ \| TikTok/i, '').trim() || 'TikTok Video';
+      return {
         url: currentUrl,
         filename: `${title}.mp4`,
         title: title,
@@ -86,65 +74,310 @@
         platform: 'TIKTOK',
         platformColor: '#fe2c55',
         isPlatform: true
-      });
+      };
+    }
+
+    return null;
+  }
+
+  function checkSupportedPlatforms() {
+    const currentUrl = window.location.href;
+    const info = detectPlatformInfo();
+
+    if (info === 'WAIT') {
+      setTimeout(checkSupportedPlatforms, 1000);
       return true;
     }
 
+    if (info) {
+      currentPlatformInfo = info;
+      if (currentUrl !== lastDetectedUrl) {
+        lastDetectedUrl = currentUrl;
+        chrome.runtime.sendMessage({
+          type: 'PLATFORM_MEDIA_FOUND',
+          item: info
+        }).catch(() => {});
+      }
+      return true;
+    }
+
+    currentPlatformInfo = null;
     return false;
   }
 
-  function sendPlatformMedia(item) {
-    chrome.runtime.sendMessage({
-      type: 'PLATFORM_MEDIA_FOUND',
-      item
-    }).catch(() => {});
+  // --- FLOATING DOWNLOAD ICON ON VIDEO ---
+  function attachOverlayToVideo(video) {
+    if (videoOverlays.has(video)) return;
+
+    const host = document.createElement('div');
+    host.className = 'grabvideo-floating-host';
+    host.style.cssText = 'position: fixed; z-index: 2147483647; pointer-events: auto; display: none;';
+    const shadow = host.attachShadow({ mode: 'open' });
+
+    shadow.innerHTML = `
+      <style>
+        .gv-bar {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: rgba(15, 23, 42, 0.88);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 9999px;
+          padding: 4px 6px;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: #f8fafc;
+          transition: all 0.2s ease;
+          opacity: 0.88;
+        }
+        .gv-bar:hover {
+          opacity: 1;
+          background: rgba(15, 23, 42, 0.96);
+          border-color: rgba(59, 130, 246, 0.6);
+        }
+        .gv-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          background: linear-gradient(135deg, #3b82f6, #2563eb);
+          color: #ffffff;
+          border: none;
+          border-radius: 9999px;
+          padding: 5px 10px;
+          font-size: 11px;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: transform 0.15s ease, opacity 0.15s ease;
+        }
+        .gv-btn:hover {
+          transform: scale(1.03);
+        }
+        .gv-btn.mp3 {
+          background: linear-gradient(135deg, #8b5cf6, #6366f1);
+          display: none;
+        }
+        .gv-bar:hover .gv-btn.mp3 {
+          display: inline-flex;
+        }
+        .gv-btn.success {
+          background: linear-gradient(135deg, #10b981, #059669);
+        }
+        .gv-btn.error {
+          background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+        .gv-close {
+          background: transparent;
+          border: none;
+          color: #94a3b8;
+          font-size: 13px;
+          line-height: 1;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          cursor: pointer;
+          display: none;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+        }
+        .gv-bar:hover .gv-close {
+          display: inline-flex;
+        }
+        .gv-close:hover {
+          color: #ffffff;
+          background: rgba(255, 255, 255, 0.12);
+        }
+        svg {
+          flex-shrink: 0;
+        }
+      </style>
+      <div class="gv-bar">
+        <button class="gv-btn mp4" title="Unduh video ke GrabVideo Windows App">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span class="label">Unduh Video</span>
+        </button>
+        <button class="gv-btn mp3" title="Unduh audio MP3">
+          🎵 MP3
+        </button>
+        <button class="gv-close" title="Sembunyikan ikon ini">&times;</button>
+      </div>
+    `;
+
+    const state = {
+      host,
+      dismissed: false,
+      updatePos: () => {
+        if (state.dismissed || !document.body.contains(video) || document.fullscreenElement) {
+          host.style.display = 'none';
+          return;
+        }
+
+        const rect = video.getBoundingClientRect();
+        // Only show on visible, reasonable-sized video players
+        if (
+          rect.width < 200 ||
+          rect.height < 140 ||
+          rect.bottom < 20 ||
+          rect.top > window.innerHeight - 20 ||
+          rect.right < 20 ||
+          rect.left > window.innerWidth - 20
+        ) {
+          host.style.display = 'none';
+          return;
+        }
+
+        const top = Math.max(8, Math.min(window.innerHeight - 44, rect.top + 12));
+        const right = Math.max(12, window.innerWidth - rect.right + 12);
+        host.style.top = `${top}px`;
+        host.style.right = `${right}px`;
+        host.style.left = 'auto';
+        host.style.display = 'block';
+      }
+    };
+
+    const btnMp4 = shadow.querySelector('.gv-btn.mp4');
+    const labelMp4 = btnMp4.querySelector('.label');
+    const btnMp3 = shadow.querySelector('.gv-btn.mp3');
+    const btnClose = shadow.querySelector('.gv-close');
+
+    function triggerDownload(format, targetBtn, targetLabel, defaultText) {
+      const platform = detectPlatformInfo();
+      let payloadItem = {};
+
+      if (platform && platform !== 'WAIT') {
+        payloadItem = {
+          url: platform.url,
+          filename: `${platform.title}.${format}`,
+          format: format,
+          pageTitle: platform.title
+        };
+      } else {
+        const src = video.currentSrc || video.src;
+        const cleanTitle = (document.title || 'video').replace(/[<>:"/\\|?*]/g, '_').trim();
+        if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+          payloadItem = {
+            url: src,
+            filename: `${cleanTitle}.${format}`,
+            format: format,
+            pageTitle: document.title
+          };
+        } else {
+          // Leave url empty so background.js picks best sniffed M3U8/MP4 stream
+          payloadItem = {
+            url: '',
+            filename: `${cleanTitle}.${format}`,
+            format: format,
+            pageTitle: document.title
+          };
+        }
+      }
+
+      targetLabel.textContent = 'Mengirim...';
+
+      chrome.runtime.sendMessage({
+        type: 'TRIGGER_INLINE_DOWNLOAD',
+        item: payloadItem
+      }, (resp) => {
+        if (resp && resp.ok) {
+          targetBtn.classList.add('success');
+          targetLabel.textContent = 'Terkirim!';
+        } else {
+          targetBtn.classList.add('error');
+          targetLabel.textContent = (resp && resp.error) ? resp.error : 'Gagal!';
+        }
+        setTimeout(() => {
+          targetBtn.classList.remove('success', 'error');
+          targetLabel.textContent = defaultText;
+        }, 2800);
+      });
+    }
+
+    btnMp4.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerDownload('mp4', btnMp4, labelMp4, 'Unduh Video');
+    });
+
+    btnMp3.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerDownload('mp3', btnMp3, btnMp3, '🎵 MP3');
+    });
+
+    btnClose.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      state.dismissed = true;
+      host.style.display = 'none';
+    });
+
+    document.documentElement.appendChild(host);
+    videoOverlays.set(video, state);
+    state.updatePos();
+  }
+
+  function updateAllOverlays() {
+    document.querySelectorAll('video').forEach(v => {
+      const state = videoOverlays.get(v);
+      if (state) state.updatePos();
+    });
   }
 
   function scanMedia() {
-    if (checkSupportedPlatforms()) {
-      return;
-    }
-
+    const isPlatform = checkSupportedPlatforms();
     const found = [];
 
-    // Find all video tags
     const videos = document.querySelectorAll('video');
     videos.forEach(v => {
-      const src = v.currentSrc || v.src;
-      if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
-        found.push({
-          url: src,
-          format: detectExt(src) || 'mp4'
+      attachOverlayToVideo(v);
+      const state = videoOverlays.get(v);
+      if (state) state.updatePos();
+
+      if (!isPlatform) {
+        const src = v.currentSrc || v.src;
+        if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+          found.push({
+            url: src,
+            format: detectExt(src) || 'mp4'
+          });
+        }
+
+        v.querySelectorAll('source').forEach(s => {
+          if (s.src && !s.src.startsWith('blob:') && !s.src.startsWith('data:')) {
+            found.push({
+              url: s.src,
+              format: detectExt(s.src) || (s.type && s.type.includes('webm') ? 'webm' : 'mp4')
+            });
+          }
         });
       }
+    });
 
-      v.querySelectorAll('source').forEach(s => {
-        if (s.src && !s.src.startsWith('blob:') && !s.src.startsWith('data:')) {
+    if (!isPlatform) {
+      const audios = document.querySelectorAll('audio');
+      audios.forEach(a => {
+        const src = a.currentSrc || a.src;
+        if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
           found.push({
-            url: s.src,
-            format: detectExt(s.src) || (s.type && s.type.includes('webm') ? 'webm' : 'mp4')
+            url: src,
+            format: detectExt(src) || 'mp3'
           });
         }
       });
-    });
 
-    // Find audio tags
-    const audios = document.querySelectorAll('audio');
-    audios.forEach(a => {
-      const src = a.currentSrc || a.src;
-      if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
-        found.push({
-          url: src,
-          format: detectExt(src) || 'mp3'
-        });
+      if (found.length > 0) {
+        chrome.runtime.sendMessage({
+          type: 'DOM_MEDIA_FOUND',
+          items: found
+        }).catch(() => {});
       }
-    });
-
-    if (found.length > 0) {
-      chrome.runtime.sendMessage({
-        type: 'DOM_MEDIA_FOUND',
-        items: found
-      }).catch(() => {});
     }
   }
 
@@ -154,8 +387,12 @@
     return match ? match[1] : null;
   }
 
-  // Scan immediately
+  // Initial scan and event listeners
   scanMedia();
+  setInterval(updateAllOverlays, 800);
+  window.addEventListener('scroll', updateAllOverlays, { passive: true });
+  window.addEventListener('resize', updateAllOverlays, { passive: true });
+  document.addEventListener('fullscreenchange', updateAllOverlays);
 
   // Handle SPA navigation (YouTube, Bilibili, TikTok)
   window.addEventListener('yt-navigate-finish', () => {
