@@ -74,21 +74,25 @@ function renderMedia() {
     const card = document.createElement('div');
     card.className = 'media-card';
 
-    if (item.isYoutube) {
-      // Special YouTube Card
+    if (item.isPlatform || item.isYoutube) {
+      // Special Platform Card (YouTube, Bilibili, TikTok)
+      const platName = item.platform || 'YOUTUBE';
+      const platColor = item.platformColor || '#ef4444';
+      const subText = item.hasSubtitles ? `${platName} Video + Sub Indo Terdeteksi` : `${platName} Video Terdeteksi`;
+
       card.innerHTML = `
         <div class="card-header">
           <div class="title-wrap">
             <div class="media-title" title="${item.title || item.filename}">${item.title || item.filename}</div>
-            <div class="media-meta" style="color: #ef4444; font-weight: 600;">YouTube Video Terdeteksi</div>
+            <div class="media-meta" style="color: ${platColor}; font-weight: 600;">${subText}</div>
           </div>
-          <span class="format-tag" style="background: rgba(239, 68, 68, 0.2); color: #ef4444;">YOUTUBE</span>
+          <span class="format-tag" style="background: ${platColor}22; color: ${platColor};">${platName}</span>
         </div>
         <div class="card-actions" style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px;">
-          <button class="btn-action-primary btn-yt-mp4" title="Unduh Video MP4 Resolusi Penuh">
+          <button class="btn-action-primary btn-yt-mp4" title="Unduh Video MP4 Kualitas Terbaik">
             ⚡ MP4 Video
           </button>
-          <button class="btn-action-primary btn-yt-mp3" style="background: linear-gradient(135deg, #8b5cf6, #6366f1);" title="Unduh Musik Audio MP3">
+          <button class="btn-action-primary btn-yt-mp3" style="background: linear-gradient(135deg, #8b5cf6, #6366f1);" title="Unduh Audio MP3">
             🎵 MP3 Audio
           </button>
           <button class="btn-action-secondary btn-copy" title="Salin URL">
@@ -100,7 +104,7 @@ function renderMedia() {
       const btnMp4 = card.querySelector('.btn-yt-mp4');
       btnMp4.addEventListener('click', () => sendToApp({
         url: item.url,
-        filename: `${item.title || 'youtube_video'}.mp4`,
+        filename: `${item.title || 'video'}.mp4`,
         format: 'mp4',
         pageTitle: item.title
       }));
@@ -108,7 +112,7 @@ function renderMedia() {
       const btnMp3 = card.querySelector('.btn-yt-mp3');
       btnMp3.addEventListener('click', () => sendToApp({
         url: item.url,
-        filename: `${item.title || 'youtube_audio'}.mp3`,
+        filename: `${item.title || 'audio'}.mp3`,
         format: 'mp3',
         pageTitle: item.title
       }));
@@ -116,7 +120,7 @@ function renderMedia() {
       const btnCopy = card.querySelector('.btn-copy');
       btnCopy.addEventListener('click', () => {
         navigator.clipboard.writeText(item.url);
-        showToast('Link YouTube berhasil disalin!');
+        showToast(`Link ${platName} berhasil disalin!`);
       });
 
     } else {

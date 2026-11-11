@@ -106,7 +106,14 @@ class DownloadManager {
     try {
       const u = new URL(urlStr);
       const host = u.hostname.toLowerCase();
-      return host.includes('tiktok.com') || host.includes('instagram.com') || host.includes('youtube.com') || host.includes('twitter.com') || host.includes('x.com');
+      return (
+        host.includes('tiktok.com') ||
+        host.includes('instagram.com') ||
+        host.includes('youtube.com') ||
+        host.includes('twitter.com') ||
+        host.includes('x.com') ||
+        host.includes('bilibili.tv')
+      );
     } catch (e) {
       return false;
     }
@@ -190,6 +197,15 @@ class DownloadManager {
     }
 
     const targetUrl = (item.pageUrl && this.isSocialPageUrl(item.pageUrl)) ? item.pageUrl : item.url;
+
+    // Special Bilibili.tv options: embed Indonesian & English subtitles and handle VIP series errors gracefully
+    if (targetUrl.includes('bilibili.tv')) {
+      args.push('--ignore-errors');
+      if (hasFFmpeg && item.format !== 'mp3') {
+        args.push('--write-subs', '--sub-langs', 'id,en', '--sub-format', 'srt', '--embed-subs');
+      }
+    }
+
     args.push(targetUrl);
 
     logger.info('YT-DLP CMD', `yt-dlp.exe ${args.join(' ')}`);

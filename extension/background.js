@@ -101,9 +101,9 @@ function addMediaItem(tabId, item) {
     tabMedia.set(tabId, list);
   }
 
-  // If item is YouTube, put at very top and replace older youtube item
-  if (item.isYoutube) {
-    list = list.filter(m => !m.isYoutube);
+  // If item is a platform item (YouTube, Bilibili, TikTok), put at top
+  if (item.isPlatform || item.isYoutube) {
+    list = list.filter(m => !m.isPlatform && !m.isYoutube);
     list.unshift(item);
     tabMedia.set(tabId, list);
     updateBadge(tabId);
@@ -146,7 +146,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Messages from content script or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'YOUTUBE_MEDIA_FOUND' && sender.tab) {
+  if ((message.type === 'YOUTUBE_MEDIA_FOUND' || message.type === 'PLATFORM_MEDIA_FOUND') && sender.tab) {
     const tabId = sender.tab.id;
     addMediaItem(tabId, message.item);
     sendResponse({ success: true });

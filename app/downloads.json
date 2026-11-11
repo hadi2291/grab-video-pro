@@ -1,5 +1,25 @@
 [
   {
+    "id": "f145748c-0f90-4e6f-8c63-d3950ad9d3b9",
+    "url": "https://upos-bstar1-mirrorakam.akamaized.net/iupxcodeboss/1z/pb/n261003er1yrsufuhtdrfb3nyck5pb1z-1-231210110000.m4s?e=ig8euxZM2rNcNbdlhoNvNC8BqJIzNbfqXBvEqxTEto8BTrNvN0GvT90W5JZMkX_YN0MvXg8gNEV4NC8xNEV4N03eN0B5tZlqNxTEto8BTrNvNeZVuJ10Kj_g2UB02J0mN0B5tZlqNCNEto8BTrNvNC7MTX502C8f2jmMQJ6mqF2fka1mqx6gqj0eN0B599M=&mid=0&platform=pc&nbs=1&gen=playurlv3&oi=3070053312&trid=db4df2337afa42d89d1b2f66f1af51d4i&uipk=5&deadline=1794368532&os=akam&upsig=0416be46cbea3c830598d5aba1513c8e&uparams=e,mid,platform,nbs,gen,oi,trid,uipk,deadline,os&hdnts=exp=1794368532~hmac=4aff216a4678cf8505e09a666e09000388bb7f6c500b3802f667652a60c130f6&bvc=vod&orderid=0,2&logo=00000000&f=i_0_0",
+    "filename": "n261003er1yrsufuhtdrfb3nyck5pb1z-1-231210110000.m4s",
+    "format": "mp4",
+    "pageTitle": "Black Clover Season 2 E1 - Pertempuran Dimulai - Bstation",
+    "pageUrl": "https://www.bilibili.tv/id/play/2432940?bstar_from=bstar-web.homepage.anime.all",
+    "headers": {
+      "Referer": "https://www.bilibili.tv/id/play/2432940?bstar_from=bstar-web.homepage.anime.all"
+    },
+    "status": "completed",
+    "downloadedBytes": 69807672,
+    "totalBytes": 69807672,
+    "speed": 0,
+    "eta": 0,
+    "filePath": "D:\\PROJECT_MANDIRI\\GrabVideo\\app\\downloads\\n261003er1yrsufuhtdrfb3nyck5pb1z-1-231210110000.m4s",
+    "createdAt": "2026-11-11T01:42:31.135Z",
+    "error": null,
+    "updatedAt": "2026-11-11T01:42:38.393Z"
+  },
+  {
     "id": "ace78c47-7fc8-46a6-814e-928fdd311ca2",
     "url": "https://rr1---sn-cp1oxu-jb3el.googlevideo.com/videoplayback?expire=1794329790&ei=PtzyaserBOrruNwP0_ed2QE&ip=2404:8000:1009:bd2:8d7b:632d:d624:ea94&id=348d3a778820a615&itag=18&source=blogger&requiressl=yes&xpc=Egho7Zf3LnoBAQ==&cps=228&met=1794300990,&mh=g3&mm=31&mn=sn-cp1oxu-jb3el&ms=au&mv=m&mvi=1&pl=49&rms=au,au&susc=bl&svpuc=1&eaua=5eqsUZKEzJ4&mime=video/mp4&vprv=1&rqh=1&dur=1397.841&lmt=1791743459381677&mt=1794300617&txp=1311224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,susc,svpuc,eaua,mime,vprv,rqh,dur,lmt&sig=AE0s2JYwRgIhAO9grb3jD8JZTYbjSFzKtyUQ9m02mNfW65CTPD8vQDfaAiEA5K8D8Q4-HhahJ3_X4YyEehaqL5AJIe7ehlRQY_wHvzA=&lsparams=cps,met,mh,mm,mn,ms,mv,mvi,pl,rms&lsig=APaTxxMwRAIgFMMm66XUNoK1ZkDhm9NhmIFga0ULBevjwzoyf7o3cikCIE1Sk7vJufP7w449GyYGOHgSjeLzgjYMCswbUGwgVIwt&cpn=s_3E-3y8Na4WqpLt&c=WEB_EMBEDDED_PLAYER&cver=1.20261103.11.00",
     "filename": "videoplayback.mp4",

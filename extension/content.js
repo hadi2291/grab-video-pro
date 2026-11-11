@@ -1,48 +1,107 @@
-// GrabVideo Content Script - Inspects page DOM for HTML5 media elements & YouTube detection
+// GrabVideo Content Script - Inspects page DOM for HTML5 media elements & Supported Platforms
 (function() {
-  let lastYoutubeUrl = '';
+  let lastDetectedUrl = '';
 
-  function checkYoutube() {
-    const isYt = window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be');
-    if (!isYt) return false;
-
-    const isWatch = window.location.pathname === '/watch' || window.location.pathname.startsWith('/shorts/');
-    if (!isWatch) return false;
-
+  function checkSupportedPlatforms() {
+    const host = window.location.hostname.toLowerCase();
+    const path = window.location.pathname;
     const currentUrl = window.location.href;
-    if (currentUrl === lastYoutubeUrl) return true;
 
-    // Get YouTube title
-    let title = document.title.replace(' - YouTube', '').trim();
-    const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.title yt-formatted-string, #title h1');
-    if (titleEl && titleEl.textContent.trim()) {
-      title = titleEl.textContent.trim();
-    }
+    // 1. YouTube
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      const isWatch = path === '/watch' || path.startsWith('/shorts/');
+      if (!isWatch) return false;
+      if (currentUrl === lastDetectedUrl) return true;
 
-    if (!title || title === 'YouTube') {
-      setTimeout(checkYoutube, 1000);
-      return true;
-    }
+      let title = document.title.replace(' - YouTube', '').trim();
+      const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.title yt-formatted-string, #title h1');
+      if (titleEl && titleEl.textContent.trim()) {
+        title = titleEl.textContent.trim();
+      }
 
-    lastYoutubeUrl = currentUrl;
+      if (!title || title === 'YouTube') {
+        setTimeout(checkSupportedPlatforms, 1000);
+        return true;
+      }
 
-    chrome.runtime.sendMessage({
-      type: 'YOUTUBE_MEDIA_FOUND',
-      item: {
+      lastDetectedUrl = currentUrl;
+      sendPlatformMedia({
         url: currentUrl,
         filename: `${title}.mp4`,
         title: title,
         format: 'YOUTUBE',
+        platform: 'YOUTUBE',
+        platformColor: '#ef4444',
         isYoutube: true,
-        source: 'youtube'
-      }
-    }).catch(() => {});
+        isPlatform: true
+      });
+      return true;
+    }
 
-    return true;
+    // 2. Bilibili.tv
+    if (host.includes('bilibili.tv') && path.includes('/play/')) {
+      if (currentUrl === lastDetectedUrl) return true;
+
+      let title = document.title.replace(/ - Bilibili.*/i, '').replace(/ \| Bilibili.*/i, '').trim();
+      const epTitleEl = document.querySelector('.video-info__title, h1, .bstar-video-title');
+      if (epTitleEl && epTitleEl.textContent.trim()) {
+        title = epTitleEl.textContent.trim();
+      }
+
+      // If URL is series-only (/play/2432940), try to find the active episode URL from DOM
+      let targetUrl = currentUrl;
+      const playMatch = path.match(/\/play\/(\d+)(?:\/(\d+))?/);
+      if (playMatch && !playMatch[2]) {
+        const seriesId = playMatch[1];
+        const activeEpLink = document.querySelector(`a[href*="/play/${seriesId}/"].active, a[href*="/play/${seriesId}/"][class*="active"]`);
+        if (activeEpLink && activeEpLink.href) {
+          targetUrl = activeEpLink.href;
+        }
+      }
+
+      lastDetectedUrl = currentUrl;
+      sendPlatformMedia({
+        url: targetUrl,
+        filename: `${title || 'bilibili_anime'}.mp4`,
+        title: title || 'Bilibili Anime',
+        format: 'BILIBILI',
+        platform: 'BILIBILI',
+        platformColor: '#00a1d6',
+        isPlatform: true,
+        hasSubtitles: true
+      });
+      return true;
+    }
+
+    // 3. TikTok Video Page
+    if (host.includes('tiktok.com') && path.includes('/video/')) {
+      if (currentUrl === lastDetectedUrl) return true;
+      let title = document.title.replace(/ \| TikTok/i, '').trim() || 'TikTok Video';
+      lastDetectedUrl = currentUrl;
+      sendPlatformMedia({
+        url: currentUrl,
+        filename: `${title}.mp4`,
+        title: title,
+        format: 'TIKTOK',
+        platform: 'TIKTOK',
+        platformColor: '#fe2c55',
+        isPlatform: true
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  function sendPlatformMedia(item) {
+    chrome.runtime.sendMessage({
+      type: 'PLATFORM_MEDIA_FOUND',
+      item
+    }).catch(() => {});
   }
 
   function scanMedia() {
-    if (checkYoutube()) {
+    if (checkSupportedPlatforms()) {
       return;
     }
 
@@ -59,7 +118,6 @@
         });
       }
 
-      // Check inner <source> tags
       v.querySelectorAll('source').forEach(s => {
         if (s.src && !s.src.startsWith('blob:') && !s.src.startsWith('data:')) {
           found.push({
@@ -99,10 +157,15 @@
   // Scan immediately
   scanMedia();
 
-  // YouTube SPA navigation listener
+  // Handle SPA navigation (YouTube, Bilibili, TikTok)
   window.addEventListener('yt-navigate-finish', () => {
-    lastYoutubeUrl = '';
+    lastDetectedUrl = '';
     setTimeout(scanMedia, 600);
+  });
+
+  window.addEventListener('popstate', () => {
+    lastDetectedUrl = '';
+    setTimeout(scanMedia, 800);
   });
 
   const observer = new MutationObserver(() => {
