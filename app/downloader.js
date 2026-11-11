@@ -106,14 +106,27 @@ class DownloadManager {
     try {
       const u = new URL(urlStr);
       const host = u.hostname.toLowerCase();
-      return (
-        host.includes('tiktok.com') ||
-        host.includes('instagram.com') ||
-        host.includes('youtube.com') ||
-        host.includes('twitter.com') ||
-        host.includes('x.com') ||
-        host.includes('bilibili.tv')
-      );
+      const pathname = u.pathname.toLowerCase();
+
+      if (host.includes('tiktok.com')) {
+        return /\/(?:video|photo)\/\d+/i.test(pathname);
+      }
+      if (host.includes('instagram.com')) {
+        return /^\/(?:reel|reels|p|tv)\//i.test(pathname);
+      }
+      if (host.includes('youtube.com')) {
+        return (pathname === '/watch' && u.searchParams.has('v')) || /^\/(?:shorts|live|embed)\//i.test(pathname);
+      }
+      if (host.includes('youtu.be')) {
+        return pathname.length > 1;
+      }
+      if (host.includes('twitter.com') || host.includes('x.com')) {
+        return /\/status\/\d+/i.test(pathname);
+      }
+      if (host.includes('bilibili.tv')) {
+        return /\/play\/\d+/i.test(pathname);
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -153,7 +166,8 @@ class DownloadManager {
   }
 
   // --- YT-DLP DOWNLOADER FOR YOUTUBE & SOCIAL MEDIA ---
-  startYtDlpDownload(item) {
+  startYtDlpDownload(item, options = {}) {
+    const forceDirectUrl = Boolean(options.forceDirectUrl);
     let isAborted = false;
 
     const abortFn = () => {
@@ -166,7 +180,11 @@ class DownloadManager {
     };
 
     const hasFFmpeg = fs.existsSync(path.join(this.binDir, 'ffmpeg.exe'));
-    const outTemplate = path.join(this.downloadDir, '%(title)s.%(ext)s');
+    const rawBase = path.basename(item.filePath || item.filename || 'video', path.extname(item.filePath || item.filename || 'video'));
+    const safeBase = rawBase.replace(/[\\/:*?"<>|%]/g, '_').trim() || 'video';
+    const outTemplate = forceDirectUrl
+      ? path.join(this.downloadDir, `${safeBase}.%(ext)s`)
+      : path.join(this.downloadDir, '%(title)s.%(ext)s');
     const args = [
       '--newline',
       '--no-playlist',
@@ -175,6 +193,11 @@ class DownloadManager {
       '--concurrent-fragments', '5',
       '-o', outTemplate
     ];
+
+    const referer = (item.headers && (item.headers.Referer || item.headers.referer)) || item.pageUrl;
+    if (forceDirectUrl && referer) {
+      args.push('--referer', referer);
+    }
 
     if (hasFFmpeg) {
       args.push('--ffmpeg-location', this.binDir);
@@ -196,7 +219,9 @@ class DownloadManager {
       }
     }
 
-    const targetUrl = (item.pageUrl && this.isSocialPageUrl(item.pageUrl)) ? item.pageUrl : item.url;
+    const targetUrl = (!forceDirectUrl && item.pageUrl && this.isSocialPageUrl(item.pageUrl))
+      ? item.pageUrl
+      : item.url;
 
     // Special Bilibili.tv options: embed Indonesian & English subtitles and handle VIP series errors gracefully
     if (targetUrl.includes('bilibili.tv')) {
@@ -582,7 +607,7 @@ class DownloadManager {
       if ((mediaPlaylistText.includes('#EXT-X-KEY') || mediaPlaylistText.includes('#EXT-X-MAP')) && fs.existsSync(this.ytDlpPath)) {
         logger.info('M3U8 ENCRYPTED', `Playlist terenkripsi/fMP4 terdeteksi, mengalihkan ke engine YT-DLP -> MP4`);
         this.activeJobs.delete(item.id);
-        return this.startYtDlpDownload(item);
+        return this.startYtDlpDownload(item, { forceDirectUrl: true });
       }
 
       const mediaLines = mediaPlaylistText.split('\n');
