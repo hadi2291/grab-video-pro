@@ -220,8 +220,8 @@ class DownloadManager {
       const host = u.hostname.toLowerCase();
       const pathname = u.pathname.toLowerCase();
 
-      // Direct CDN fragments should not be routed to yt-dlp directly
-      if (pathname.includes('/video/tos/') || host.includes('googlevideo.com')) {
+      // Direct CDN fragments should not be routed to yt-dlp directly unless pageUrl is a specific social video post
+      if (pathname.includes('/video/tos/') || host.includes('googlevideo.com') || host.includes('fbcdn.net')) {
         if (item.pageUrl && this.isSocialPageUrl(item.pageUrl)) {
           return true;
         }
@@ -276,16 +276,40 @@ class DownloadManager {
       if (host.includes('bilibili.tv')) {
         return /\/play\/\d+/i.test(pathname);
       }
+      if (host.includes('facebook.com')) {
+        return /^\/(?:watch|reel\/|share\/[vr]\/)/.test(pathname) || /\/videos\/\d+/i.test(pathname);
+      }
+      if (host.includes('fb.watch')) {
+        return pathname.length > 1;
+      }
       return false;
     } catch (e) {
       return false;
     }
   }
 
+  stripByteRangeParams(urlStr) {
+    try {
+      const u = new URL(urlStr);
+      if (u.searchParams.has('bytestart') || u.searchParams.has('byteend')) {
+        u.searchParams.delete('bytestart');
+        u.searchParams.delete('byteend');
+        return u.toString();
+      }
+    } catch (e) {}
+    return urlStr;
+  }
+
   async start(item) {
     if (this.activeJobs.has(item.id)) {
       logger.warn('JOB', `Job ${item.id} (${item.filename}) sudah berjalan.`);
       return;
+    }
+
+    const cleanedUrl = this.stripByteRangeParams(item.url);
+    if (cleanedUrl !== item.url) {
+      logger.info('URL CLEAN', `Menghapus parameter potongan bytestart/byteend agar mengunduh file utuh dari byte 0`);
+      item.url = cleanedUrl;
     }
 
     item.status = 'downloading';

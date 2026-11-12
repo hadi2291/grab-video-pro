@@ -47,10 +47,20 @@ chrome.webRequest.onResponseStarted.addListener(
   (details) => {
     if (details.tabId <= 0) return;
 
-    const url = details.url;
+    let url = details.url;
     if (url.startsWith('chrome') || url.includes('127.0.0.1:54321') || url.includes('localhost:54321')) {
       return;
     }
+
+    // Strip byte-range chunk query params (e.g. Facebook fbcdn bytestart/byteend) so full file from byte 0 is captured
+    try {
+      const parsed = new URL(url);
+      if (parsed.searchParams.has('bytestart') || parsed.searchParams.has('byteend')) {
+        parsed.searchParams.delete('bytestart');
+        parsed.searchParams.delete('byteend');
+        url = parsed.toString();
+      }
+    } catch (e) {}
 
     const contentType = getHeader(details.responseHeaders, 'content-type') || '';
     const contentLength = parseInt(getHeader(details.responseHeaders, 'content-length') || '0', 10);
